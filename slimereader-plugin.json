@@ -1,0 +1,25 @@
+{
+    "id": "slimereader-plugin",
+    "name": "Slime Reader",
+    "version": "1.0.0",
+    "manifestURI": "https://raw.githubusercontent.com/FemboyEnjoyerAndLover/slime-reader-seanime/main/slimereader-plugin.json",
+    "description": "Read all 21 volumes of 'That Time I Got Reincarnated as a Slime' light novel inside Seanime, with automatic reading progress saved per volume.",
+    "author": "FemboyEnjoyerAndLover",
+    "icon": "",
+    "language": "typescript",
+    "type": "plugin",
+    "payloadURI": "https://raw.githubusercontent.com/FemboyEnjoyerAndLover/slime-reader-seanime/main/slimereader-plugin.ts",
+    "lang": "EN",
+    "plugin": {
+        "version": "1",
+        "permissions": {
+            "scopes": ["storage"],
+            "allow": {
+                "networkAccess": {
+                    "allowedDomains": ["tensurafan.github.io"],
+                    "reasoning": "Required to fetch light novel chapter content from tensurafan.github.io"
+                }
+            }
+        }
+    }
+}
