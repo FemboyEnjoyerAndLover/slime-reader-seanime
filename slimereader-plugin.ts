@@ -4,1515 +4,795 @@
 /// <reference path="./core.d.ts" />
 
 // =============================================================================
-// Slime Reader Plugin for Seanime Denshi
-// Displays That Time I Got Reincarnated as a Slime light novels from
-// https://tensurafan.github.io with persistent reading progress.
+// Slime Reader – Seanime Plugin
+// Injects a full-screen reader UI into Seanime's DOM via a tray icon click.
+// Progress is saved to localStorage (survives tab reloads) and also synced
+// to plugin $storage (survives app restarts) via a periodic heartbeat.
 // =============================================================================
 
 function init() {
     $ui.register((ctx) => {
 
-        // -----------------------------------------------------------------------
-        // STORAGE HELPERS
-        // Progress is saved via $storage (plugin-side) and also synced
-        // into the webview via channel so the iframe can restore scroll.
-        // -----------------------------------------------------------------------
-        function saveProgress(volumeKey: string, chapterId: string, scrollPct: number) {
-            $storage.set("progress." + volumeKey + ".chapterId", chapterId);
-            $storage.set("progress." + volumeKey + ".scrollPct", scrollPct);
-            $storage.set("progress." + volumeKey + ".savedAt", Date.now());
+        // ------------------------------------------------------------------
+        // Generate the self-contained injected script string.
+        // Everything inside runs in the browser context (window / DOM).
+        // ------------------------------------------------------------------
+        function getInjectedScript(scriptId: string): string {
+            return `
+(async function() {
+    // Exit early if already open
+    if (document.getElementById("sr-backdrop")) return;
+
+    // =========================================================
+    // VOLUME CATALOGUE
+    // URL structure: https://tensurafan.github.io/vol1/ch1/ etc.
+    // =========================================================
+    const BASE = "https://tensurafan.github.io";
+
+    const VOLUMES = [
+        { key:"vol1",  label:"Volume 1",  title:"Birth of a Slime",          emoji:"🟢",
+          chapters:[
+            {id:"prologue",title:"Prologue",          path:"/vol1/prologue/"},
+            {id:"ch1",     title:"Chapter 1",          path:"/vol1/ch1/"},
+            {id:"ch2",     title:"Chapter 2",          path:"/vol1/ch2/"},
+            {id:"ch3",     title:"Chapter 3",          path:"/vol1/ch3/"},
+            {id:"ch4",     title:"Chapter 4",          path:"/vol1/ch4/"},
+            {id:"ch5",     title:"Chapter 5",          path:"/vol1/ch5/"},
+            {id:"ch6",     title:"Chapter 6",          path:"/vol1/ch6/"},
+            {id:"ch7",     title:"Chapter 7",          path:"/vol1/ch7/"},
+            {id:"epilogue",title:"Epilogue",           path:"/vol1/epilogue/"},
+          ]},
+        { key:"vol2",  label:"Volume 2",  title:"The Dwarven Kingdom Arc",    emoji:"⚒️",
+          chapters:[
+            {id:"prologue",title:"Prologue",path:"/vol2/prologue/"},
+            {id:"ch1",title:"Chapter 1",path:"/vol2/ch1/"},
+            {id:"ch2",title:"Chapter 2",path:"/vol2/ch2/"},
+            {id:"ch3",title:"Chapter 3",path:"/vol2/ch3/"},
+            {id:"ch4",title:"Chapter 4",path:"/vol2/ch4/"},
+            {id:"ch5",title:"Chapter 5",path:"/vol2/ch5/"},
+            {id:"ch6",title:"Chapter 6",path:"/vol2/ch6/"},
+            {id:"epilogue",title:"Epilogue",path:"/vol2/epilogue/"},
+          ]},
+        { key:"vol3",  label:"Volume 3",  title:"The Orc Disaster Arc",       emoji:"🐗",
+          chapters:[
+            {id:"prologue",title:"Prologue",path:"/vol3/prologue/"},
+            {id:"ch1",title:"Chapter 1",path:"/vol3/ch1/"},
+            {id:"ch2",title:"Chapter 2",path:"/vol3/ch2/"},
+            {id:"ch3",title:"Chapter 3",path:"/vol3/ch3/"},
+            {id:"ch4",title:"Chapter 4",path:"/vol3/ch4/"},
+            {id:"ch5",title:"Chapter 5",path:"/vol3/ch5/"},
+            {id:"ch6",title:"Chapter 6",path:"/vol3/ch6/"},
+            {id:"epilogue",title:"Epilogue",path:"/vol3/epilogue/"},
+          ]},
+        { key:"vol4",  label:"Volume 4",  title:"Tempest Founding Arc",       emoji:"🏰",
+          chapters:[
+            {id:"prologue",title:"Prologue",path:"/vol4/prologue/"},
+            {id:"ch1",title:"Chapter 1",path:"/vol4/ch1/"},
+            {id:"ch2",title:"Chapter 2",path:"/vol4/ch2/"},
+            {id:"ch3",title:"Chapter 3",path:"/vol4/ch3/"},
+            {id:"ch4",title:"Chapter 4",path:"/vol4/ch4/"},
+            {id:"ch5",title:"Chapter 5",path:"/vol4/ch5/"},
+            {id:"epilogue",title:"Epilogue",path:"/vol4/epilogue/"},
+          ]},
+        { key:"vol5",  label:"Volume 5",  title:"Kingdom of Farmus",          emoji:"⚔️",
+          chapters:[
+            {id:"prologue",title:"Prologue",path:"/vol5/prologue/"},
+            {id:"ch1",title:"Chapter 1",path:"/vol5/ch1/"},
+            {id:"ch2",title:"Chapter 2",path:"/vol5/ch2/"},
+            {id:"ch3",title:"Chapter 3",path:"/vol5/ch3/"},
+            {id:"ch4",title:"Chapter 4",path:"/vol5/ch4/"},
+            {id:"ch5",title:"Chapter 5",path:"/vol5/ch5/"},
+            {id:"epilogue",title:"Epilogue",path:"/vol5/epilogue/"},
+          ]},
+        { key:"vol6",  label:"Volume 6",  title:"Walpurgis",                  emoji:"🌙",
+          chapters:[
+            {id:"prologue",title:"Prologue",path:"/vol6/prologue/"},
+            {id:"ch1",title:"Chapter 1",path:"/vol6/ch1/"},
+            {id:"ch2",title:"Chapter 2",path:"/vol6/ch2/"},
+            {id:"ch3",title:"Chapter 3",path:"/vol6/ch3/"},
+            {id:"ch4",title:"Chapter 4",path:"/vol6/ch4/"},
+            {id:"epilogue",title:"Epilogue",path:"/vol6/epilogue/"},
+          ]},
+        { key:"vol7",  label:"Volume 7",  title:"Eurazania Arc",              emoji:"🐾",
+          chapters:[
+            {id:"prologue",title:"Prologue",path:"/vol7/prologue/"},
+            {id:"ch1",title:"Chapter 1",path:"/vol7/ch1/"},
+            {id:"ch2",title:"Chapter 2",path:"/vol7/ch2/"},
+            {id:"ch3",title:"Chapter 3",path:"/vol7/ch3/"},
+            {id:"ch4",title:"Chapter 4",path:"/vol7/ch4/"},
+            {id:"epilogue",title:"Epilogue",path:"/vol7/epilogue/"},
+          ]},
+        { key:"vol8",  label:"Volume 8",  title:"Labyrinth Arc",              emoji:"🌀",
+          chapters:[
+            {id:"prologue",title:"Prologue",path:"/vol8/prologue/"},
+            {id:"ch1",title:"Chapter 1",path:"/vol8/ch1/"},
+            {id:"ch2",title:"Chapter 2",path:"/vol8/ch2/"},
+            {id:"ch3",title:"Chapter 3",path:"/vol8/ch3/"},
+            {id:"ch4",title:"Chapter 4",path:"/vol8/ch4/"},
+            {id:"epilogue",title:"Epilogue",path:"/vol8/epilogue/"},
+          ]},
+        { key:"vol9",  label:"Volume 9",  title:"Eurazania Restored",         emoji:"🌿",
+          chapters:[
+            {id:"prologue",title:"Prologue",path:"/vol9/prologue/"},
+            {id:"ch1",title:"Chapter 1",path:"/vol9/ch1/"},
+            {id:"ch2",title:"Chapter 2",path:"/vol9/ch2/"},
+            {id:"ch3",title:"Chapter 3",path:"/vol9/ch3/"},
+            {id:"ch4",title:"Chapter 4",path:"/vol9/ch4/"},
+            {id:"epilogue",title:"Epilogue",path:"/vol9/epilogue/"},
+          ]},
+        { key:"vol10", label:"Volume 10", title:"Tenma Great War",            emoji:"💥",
+          chapters:[
+            {id:"prologue",title:"Prologue",path:"/vol10/prologue/"},
+            {id:"ch1",title:"Chapter 1",path:"/vol10/ch1/"},
+            {id:"ch2",title:"Chapter 2",path:"/vol10/ch2/"},
+            {id:"ch3",title:"Chapter 3",path:"/vol10/ch3/"},
+            {id:"ch4",title:"Chapter 4",path:"/vol10/ch4/"},
+            {id:"ch5",title:"Chapter 5",path:"/vol10/ch5/"},
+            {id:"epilogue",title:"Epilogue",path:"/vol10/epilogue/"},
+          ]},
+        { key:"vol11", label:"Volume 11", title:"King of Monsters",           emoji:"👑",
+          chapters:[
+            {id:"prologue",title:"Prologue",path:"/vol11/prologue/"},
+            {id:"ch1",title:"Chapter 1",path:"/vol11/ch1/"},
+            {id:"ch2",title:"Chapter 2",path:"/vol11/ch2/"},
+            {id:"ch3",title:"Chapter 3",path:"/vol11/ch3/"},
+            {id:"ch4",title:"Chapter 4",path:"/vol11/ch4/"},
+            {id:"epilogue",title:"Epilogue",path:"/vol11/epilogue/"},
+          ]},
+        { key:"vol12", label:"Volume 12", title:"Sealed Foes",                emoji:"🔒",
+          chapters:[
+            {id:"prologue",title:"Prologue",path:"/vol12/prologue/"},
+            {id:"ch1",title:"Chapter 1",path:"/vol12/ch1/"},
+            {id:"ch2",title:"Chapter 2",path:"/vol12/ch2/"},
+            {id:"ch3",title:"Chapter 3",path:"/vol12/ch3/"},
+            {id:"ch4",title:"Chapter 4",path:"/vol12/ch4/"},
+            {id:"epilogue",title:"Epilogue",path:"/vol12/epilogue/"},
+          ]},
+        { key:"vol13", label:"Volume 13", title:"Road to the Empire",         emoji:"🗺️",
+          chapters:[
+            {id:"prologue",title:"Prologue",path:"/vol13/prologue/"},
+            {id:"ch1",title:"Chapter 1",path:"/vol13/ch1/"},
+            {id:"ch2",title:"Chapter 2",path:"/vol13/ch2/"},
+            {id:"ch3",title:"Chapter 3",path:"/vol13/ch3/"},
+            {id:"epilogue",title:"Epilogue",path:"/vol13/epilogue/"},
+          ]},
+        { key:"vol14", label:"Volume 14", title:"Invaders",                   emoji:"🌪️",
+          chapters:[
+            {id:"prologue",title:"Prologue",path:"/vol14/prologue/"},
+            {id:"ch1",title:"Chapter 1",path:"/vol14/ch1/"},
+            {id:"ch2",title:"Chapter 2",path:"/vol14/ch2/"},
+            {id:"ch3",title:"Chapter 3",path:"/vol14/ch3/"},
+            {id:"ch4",title:"Chapter 4",path:"/vol14/ch4/"},
+            {id:"epilogue",title:"Epilogue",path:"/vol14/epilogue/"},
+          ]},
+        { key:"vol15", label:"Volume 15", title:"The Empire's Fall",          emoji:"🏚️",
+          chapters:[
+            {id:"prologue",title:"Prologue",path:"/vol15/prologue/"},
+            {id:"ch1",title:"Chapter 1",path:"/vol15/ch1/"},
+            {id:"ch2",title:"Chapter 2",path:"/vol15/ch2/"},
+            {id:"ch3",title:"Chapter 3",path:"/vol15/ch3/"},
+            {id:"epilogue",title:"Epilogue",path:"/vol15/epilogue/"},
+          ]},
+        { key:"vol16", label:"Volume 16", title:"Beginning of the End",       emoji:"🌌",
+          chapters:[
+            {id:"prologue",title:"Prologue",path:"/vol16/prologue/"},
+            {id:"ch1",title:"Chapter 1",path:"/vol16/ch1/"},
+            {id:"ch2",title:"Chapter 2",path:"/vol16/ch2/"},
+            {id:"ch3",title:"Chapter 3",path:"/vol16/ch3/"},
+            {id:"epilogue",title:"Epilogue",path:"/vol16/epilogue/"},
+          ]},
+        { key:"vol17", label:"Volume 17", title:"Dragon vs Demon",            emoji:"🐉",
+          chapters:[
+            {id:"prologue",title:"Prologue",path:"/vol17/prologue/"},
+            {id:"ch1",title:"Chapter 1",path:"/vol17/ch1/"},
+            {id:"ch2",title:"Chapter 2",path:"/vol17/ch2/"},
+            {id:"ch3",title:"Chapter 3",path:"/vol17/ch3/"},
+            {id:"epilogue",title:"Epilogue",path:"/vol17/epilogue/"},
+          ]},
+        { key:"vol18", label:"Volume 18", title:"King of Tempest",            emoji:"⚡",
+          chapters:[
+            {id:"prologue",title:"Prologue",path:"/vol18/prologue/"},
+            {id:"ch1",title:"Chapter 1",path:"/vol18/ch1/"},
+            {id:"ch2",title:"Chapter 2",path:"/vol18/ch2/"},
+            {id:"ch3",title:"Chapter 3",path:"/vol18/ch3/"},
+            {id:"epilogue",title:"Epilogue",path:"/vol18/epilogue/"},
+          ]},
+        { key:"vol19", label:"Volume 19", title:"The True Dragon",            emoji:"🌟",
+          chapters:[
+            {id:"prologue",title:"Prologue",path:"/vol19/prologue/"},
+            {id:"ch1",title:"Chapter 1",path:"/vol19/ch1/"},
+            {id:"ch2",title:"Chapter 2",path:"/vol19/ch2/"},
+            {id:"epilogue",title:"Epilogue",path:"/vol19/epilogue/"},
+          ]},
+        { key:"vol20", label:"Volume 20", title:"Beyond the Stars",           emoji:"✨",
+          chapters:[
+            {id:"prologue",title:"Prologue",path:"/vol20/prologue/"},
+            {id:"ch1",title:"Chapter 1",path:"/vol20/ch1/"},
+            {id:"ch2",title:"Chapter 2",path:"/vol20/ch2/"},
+            {id:"epilogue",title:"Epilogue",path:"/vol20/epilogue/"},
+          ]},
+        { key:"vol21", label:"Volume 21", title:"Finale",                     emoji:"🏁",
+          chapters:[
+            {id:"prologue",title:"Prologue",path:"/vol21/prologue/"},
+            {id:"ch1",title:"Chapter 1",path:"/vol21/ch1/"},
+            {id:"ch2",title:"Chapter 2",path:"/vol21/ch2/"},
+            {id:"ch3",title:"Chapter 3 – Final Chapter",path:"/vol21/ch3/"},
+            {id:"epilogue",title:"Epilogue",path:"/vol21/epilogue/"},
+          ]},
+    ];
+
+    // =========================================================
+    // PROGRESS  (localStorage)
+    // Keys: sr_progress_vol1  →  JSON {chapterId, scrollPct}
+    // =========================================================
+    const Progress = {
+        key: (vk) => "sr_progress_" + vk,
+        get: (vk) => {
+            try { return JSON.parse(localStorage.getItem(Progress.key(vk))) || null; }
+            catch(_) { return null; }
+        },
+        set: (vk, chId, pct) => {
+            localStorage.setItem(Progress.key(vk), JSON.stringify({chapterId:chId, scrollPct:pct}));
+        }
+    };
+
+    // =========================================================
+    // READER SETTINGS  (localStorage)
+    // =========================================================
+    const DEFAULT_SETTINGS = { theme:"dark", fontSize:18, lineHeight:1.85, fontFamily:"Georgia, serif", maxWidth:760 };
+    const Settings = {
+        _d: null,
+        get: () => {
+            if (Settings._d) return Settings._d;
+            try { Settings._d = Object.assign({}, DEFAULT_SETTINGS, JSON.parse(localStorage.getItem("sr_settings"))); }
+            catch(_) { Settings._d = Object.assign({}, DEFAULT_SETTINGS); }
+            return Settings._d;
+        },
+        save: () => { try { localStorage.setItem("sr_settings", JSON.stringify(Settings._d)); } catch(_) {} },
+        apply: () => {
+            const s = Settings.get();
+            const THEMES = { dark:{bg:"#0d1117",txt:"#e2e8f0",wrap:"#0d1117"}, sepia:{bg:"#f4ecd8",txt:"#5b4636",wrap:"#f4ecd8"}, light:{bg:"#f5f5f5",txt:"#1a1a1a",wrap:"#f5f5f5"} };
+            const t = THEMES[s.theme] || THEMES.dark;
+            const rc = document.getElementById("sr-content");
+            const rw = document.getElementById("sr-content-wrap");
+            if (rc) { rc.style.fontSize = s.fontSize+"px"; rc.style.lineHeight = s.lineHeight; rc.style.fontFamily = s.fontFamily; rc.style.maxWidth = s.maxWidth+"px"; rc.style.color = t.txt; }
+            if (rw) rw.style.background = t.wrap;
+            document.querySelectorAll(".sr-theme-btn").forEach(b => b.classList.toggle("sr-active", b.dataset.theme === s.theme));
+            const fsl = document.getElementById("sr-fs-label"); if (fsl) fsl.textContent = s.fontSize;
+            const lhl = document.getElementById("sr-lh-label"); if (lhl) lhl.textContent = s.lineHeight;
+            const mwl = document.getElementById("sr-mw-label"); if (mwl) mwl.textContent = s.maxWidth;
+            const fss = document.getElementById("sr-fs-slider"); if (fss) fss.value = s.fontSize;
+            const lhs = document.getElementById("sr-lh-slider"); if (lhs) lhs.value = s.lineHeight;
+            const mws = document.getElementById("sr-mw-slider"); if (mws) mws.value = s.maxWidth;
+            const ffs = document.getElementById("sr-ff-select"); if (ffs) ffs.value = s.fontFamily;
+        }
+    };
+
+    // =========================================================
+    // APP STATE
+    // =========================================================
+    const App = { page:"home", vol:null, chIdx:0, scrollTimer:null };
+
+    // =========================================================
+    // FETCH CHAPTER HTML from tensurafan.github.io
+    // =========================================================
+    async function fetchChapter(path) {
+        const url = BASE + path;
+        const res = await fetch(url, {mode:"cors",credentials:"omit"});
+        if (!res.ok) throw new Error("HTTP "+res.status+" for "+url);
+        const html = await res.text();
+        const doc = new DOMParser().parseFromString(html, "text/html");
+        // Remove noise
+        ["nav","header","footer","script","style","iframe"].forEach(tag => doc.querySelectorAll(tag).forEach(el=>el.remove()));
+        // Pick best content node
+        const content = doc.querySelector("article,.content,.post-content,.markdown-body,main,#content") || doc.body;
+        // Rewrite relative images
+        content.querySelectorAll("img[src]").forEach(img => {
+            const s = img.getAttribute("src");
+            if (s && !s.startsWith("http")) img.setAttribute("src", new URL(s, url).href);
+        });
+        return content.innerHTML;
+    }
+
+    // =========================================================
+    // CSS
+    // =========================================================
+    const CSS = \`
+#sr-backdrop{position:fixed;inset:0;z-index:99999;background:#0d1117;display:flex;flex-direction:column;font-family:-apple-system,"Segoe UI",system-ui,sans-serif;}
+#sr-topbar{display:flex;align-items:center;gap:10px;padding:10px 18px;background:#161b22;border-bottom:1px solid #30363d;flex-shrink:0;}
+.sr-logo{display:flex;align-items:center;gap:8px;font-weight:700;font-size:1rem;color:#7ee8a2;white-space:nowrap;}
+#sr-close{margin-left:auto;background:transparent;border:1px solid #30363d;color:#8b949e;width:30px;height:30px;border-radius:6px;cursor:pointer;font-size:1.1rem;display:flex;align-items:center;justify-content:center;}
+#sr-close:hover{background:#21262d;color:#e2e8f0;}
+#sr-back{background:transparent;border:1px solid #30363d;color:#8b949e;padding:5px 12px;border-radius:6px;cursor:pointer;font-size:0.82rem;display:none;align-items:center;gap:5px;}
+#sr-back:hover{background:#21262d;color:#e2e8f0;}
+#sr-back.sr-vis{display:flex;}
+#sr-ch-bar{flex:1;font-size:0.85rem;color:#8b949e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;}
+#sr-settings-btn{background:transparent;border:1px solid #30363d;color:#8b949e;padding:5px 9px;border-radius:6px;cursor:pointer;display:none;align-items:center;}
+#sr-settings-btn:hover{background:#21262d;}
+#sr-settings-btn.sr-vis{display:flex;}
+#sr-main{flex:1;overflow-y:auto;overflow-x:hidden;position:relative;}
+/* HOME */
+#sr-home{padding:28px 22px;max-width:1100px;margin:0 auto;}
+.sr-hero{background:linear-gradient(135deg,#1a2332,#0d2137,#1a1a2e);border:1px solid #30363d;border-radius:14px;padding:32px 40px;margin-bottom:36px;display:flex;align-items:center;gap:28px;}
+.sr-hero-emoji{font-size:56px;filter:drop-shadow(0 0 16px rgba(126,232,162,.4));flex-shrink:0;}
+.sr-hero h1{font-size:1.55rem;font-weight:800;color:#7ee8a2;margin:0 0 6px;}
+.sr-hero p{color:#8b949e;font-size:.9rem;line-height:1.6;margin:0;}
+.sr-continue-banner{background:#161b22;border:1px solid #7ee8a28f;border-radius:10px;padding:16px 20px;margin-bottom:32px;display:flex;align-items:center;gap:16px;cursor:pointer;transition:border-color .2s;}
+.sr-continue-banner:hover{border-color:#7ee8a2;}
+.sr-continue-info{flex:1;}
+.sr-continue-tag{font-size:.7rem;color:#7ee8a2;text-transform:uppercase;letter-spacing:.08em;font-weight:700;margin-bottom:3px;}
+.sr-continue-title{font-weight:700;color:#c9d1d9;font-size:1rem;}
+.sr-continue-sub{color:#8b949e;font-size:.82rem;margin-top:2px;}
+.sr-continue-cta{background:#7ee8a2;color:#0d1117;border:none;padding:8px 16px;border-radius:7px;font-weight:700;cursor:pointer;white-space:nowrap;font-size:.85rem;}
+.sr-sec{font-size:.95rem;font-weight:700;color:#c9d1d9;margin:0 0 16px;display:flex;align-items:center;gap:8px;}
+.sr-sec::after{content:"";flex:1;height:1px;background:#21262d;}
+.sr-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:16px;margin-bottom:40px;}
+.sr-vol-card{background:#161b22;border:1px solid #21262d;border-radius:10px;overflow:hidden;cursor:pointer;transition:all .2s;position:relative;}
+.sr-vol-card:hover{border-color:#7ee8a2;transform:translateY(-2px);box-shadow:0 8px 24px rgba(0,0,0,.4);}
+.sr-vol-cover{width:100%;aspect-ratio:2/3;background:linear-gradient(135deg,#1f2a38,#0d1a28);display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:2rem;border-bottom:1px solid #21262d;position:relative;}
+.sr-vol-num{font-size:.58rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#7ee8a2;background:rgba(0,0,0,.75);padding:2px 7px;border-radius:3px;position:absolute;top:7px;left:7px;}
+.sr-reading-badge{position:absolute;top:7px;right:7px;background:#7ee8a2;color:#0d1117;font-size:.55rem;font-weight:800;text-transform:uppercase;letter-spacing:.07em;padding:2px 5px;border-radius:3px;}
+.sr-pbar-wrap{position:absolute;bottom:0;left:0;right:0;height:3px;background:rgba(255,255,255,.1);}
+.sr-pbar-fill{height:100%;background:#7ee8a2;transition:width .3s;}
+.sr-vol-info{padding:9px 11px 12px;}
+.sr-vol-name{font-size:.78rem;font-weight:600;color:#c9d1d9;line-height:1.3;margin-bottom:3px;}
+.sr-vol-sub{font-size:.68rem;color:#6e7681;}
+/* VOLUME PAGE */
+#sr-vol-page{padding:28px 22px;max-width:860px;margin:0 auto;}
+.sr-vol-hdr{display:flex;gap:20px;margin-bottom:28px;padding-bottom:20px;border-bottom:1px solid #21262d;}
+.sr-vol-hdr-cover{width:100px;aspect-ratio:2/3;background:linear-gradient(135deg,#1f2a38,#0d1a28);border-radius:7px;display:flex;align-items:center;justify-content:center;font-size:2.2rem;border:1px solid #30363d;flex-shrink:0;}
+.sr-vol-hdr-meta h2{font-size:1.25rem;font-weight:700;color:#c9d1d9;margin:0 0 4px;}
+.sr-vol-hdr-meta p{color:#8b949e;font-size:.85rem;margin:0 0 10px;}
+.sr-vol-progress{font-size:.78rem;color:#7ee8a2;margin-bottom:10px;}
+.sr-cta-btn{background:#7ee8a2;color:#0d1117;border:none;padding:7px 16px;border-radius:7px;font-weight:700;cursor:pointer;font-size:.85rem;}
+.sr-cta-btn:hover{opacity:.87;}
+.sr-ch-list{display:flex;flex-direction:column;gap:3px;}
+.sr-ch-item{display:flex;align-items:center;gap:10px;padding:11px 14px;background:#161b22;border:1px solid #21262d;border-radius:7px;cursor:pointer;transition:all .15s;}
+.sr-ch-item:hover{background:#1c2128;border-color:#30363d;}
+.sr-ch-item.sr-ch-active{border-color:#7ee8a2;background:rgba(126,232,162,.06);}
+.sr-ch-dot{width:7px;height:7px;border-radius:50%;background:#30363d;flex-shrink:0;}
+.sr-ch-item.sr-ch-active .sr-ch-dot{background:#7ee8a2;}
+.sr-ch-title{flex:1;font-size:.88rem;color:#c9d1d9;}
+.sr-ch-item.sr-ch-active .sr-ch-title{color:#7ee8a2;font-weight:600;}
+.sr-ch-bm{font-size:.72rem;color:#7ee8a2;}
+/* READER */
+#sr-reader-page{display:flex;flex-direction:column;height:100%;overflow:hidden;}
+#sr-reader-nav{display:flex;align-items:center;gap:7px;padding:7px 14px;background:#161b22;border-bottom:1px solid #21262d;flex-shrink:0;}
+#sr-reader-nav button{background:#21262d;border:1px solid #30363d;color:#c9d1d9;padding:5px 13px;border-radius:5px;cursor:pointer;font-size:.82rem;white-space:nowrap;}
+#sr-reader-nav button:hover:not(:disabled){background:#30363d;}
+#sr-reader-nav button:disabled{opacity:.3;cursor:not-allowed;}
+#sr-ch-select{flex:1;background:#21262d;border:1px solid #30363d;color:#c9d1d9;padding:5px 9px;border-radius:5px;font-size:.82rem;}
+#sr-content-wrap{flex:1;overflow-y:auto;overflow-x:hidden;background:#0d1117;}
+#sr-content{max-width:760px;margin:0 auto;padding:36px 28px 80px;font-size:18px;line-height:1.85;color:#e2e8f0;font-family:"Georgia",serif;}
+#sr-content p{margin-bottom:1.15em;}
+#sr-content img{max-width:100%;border-radius:7px;margin:10px 0;}
+#sr-content h1,#sr-content h2,#sr-content h3{font-family:system-ui,sans-serif;color:#7ee8a2;margin:1.4em 0 .45em;}
+/* SETTINGS PANEL */
+#sr-settings-panel{position:absolute;top:46px;right:0;width:260px;background:#161b22;border:1px solid #30363d;border-radius:0 0 0 10px;padding:14px;z-index:200;display:none;box-shadow:-4px 4px 20px rgba(0,0,0,.6);}
+#sr-settings-panel.sr-open{display:block;}
+.sr-srow{margin-bottom:14px;}
+.sr-srow label{display:block;font-size:.72rem;color:#8b949e;margin-bottom:5px;text-transform:uppercase;letter-spacing:.06em;}
+.sr-srow input[type=range]{width:100%;accent-color:#7ee8a2;}
+.sr-srow select{width:100%;background:#21262d;border:1px solid #30363d;color:#c9d1d9;padding:5px 7px;border-radius:5px;font-size:.82rem;}
+.sr-theme-btns{display:flex;gap:5px;}
+.sr-theme-btn{flex:1;padding:5px;border-radius:5px;border:2px solid #30363d;cursor:pointer;font-size:.72rem;font-weight:600;}
+.sr-theme-btn.sr-active{border-color:#7ee8a2;}
+.sr-theme-btn[data-theme=dark]{background:#0d1117;color:#e2e8f0;}
+.sr-theme-btn[data-theme=sepia]{background:#f4ecd8;color:#5b4636;}
+.sr-theme-btn[data-theme=light]{background:#f5f5f5;color:#1a1a1a;}
+/* SPINNER */
+.sr-spin{display:flex;flex-direction:column;align-items:center;justify-content:center;height:220px;gap:14px;}
+.sr-spin-ring{width:38px;height:38px;border:3px solid #21262d;border-top-color:#7ee8a2;border-radius:50%;animation:sr-spin .7s linear infinite;}
+@keyframes sr-spin{to{transform:rotate(360deg)}}
+.sr-spin p{color:#6e7681;font-size:.88rem;}
+/* ERROR */
+.sr-err{margin:36px auto;max-width:460px;background:#1c1c1c;border:1px solid #f0883e55;border-radius:10px;padding:22px;text-align:center;color:#f0883e;}
+.sr-err p{margin-top:7px;color:#8b949e;font-size:.85rem;}
+.sr-err a{color:#f0883e;}
+.sr-err button{margin-top:14px;background:#f0883e;color:#fff;border:none;padding:7px 18px;border-radius:5px;cursor:pointer;font-weight:600;}
+/* SCROLLBAR */
+::-webkit-scrollbar{width:5px;}
+::-webkit-scrollbar-track{background:transparent;}
+::-webkit-scrollbar-thumb{background:#30363d;border-radius:3px;}
+::-webkit-scrollbar-thumb:hover{background:#484f58;}
+\`;
+
+    // =========================================================
+    // INJECT CSS
+    // =========================================================
+    const styleEl = document.createElement("style");
+    styleEl.id = "sr-style";
+    styleEl.textContent = CSS;
+    document.head.appendChild(styleEl);
+
+    // =========================================================
+    // BUILD BACKDROP / SHELL
+    // =========================================================
+    const backdrop = document.createElement("div");
+    backdrop.id = "sr-backdrop";
+    backdrop.innerHTML = \`
+        <div id="sr-topbar">
+            <div class="sr-logo">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+                Slime Reader
+            </div>
+            <button id="sr-back">&#8249; Back</button>
+            <span id="sr-ch-bar"></span>
+            <button id="sr-settings-btn" title="Reader settings">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+            </button>
+            <button id="sr-close">&#x2715;</button>
+        </div>
+
+        <div id="sr-settings-panel">
+            <div class="sr-srow">
+                <label>Theme</label>
+                <div class="sr-theme-btns">
+                    <button class="sr-theme-btn sr-active" data-theme="dark">Dark</button>
+                    <button class="sr-theme-btn" data-theme="sepia">Sepia</button>
+                    <button class="sr-theme-btn" data-theme="light">Light</button>
+                </div>
+            </div>
+            <div class="sr-srow"><label>Font Size: <span id="sr-fs-label">18</span>px</label><input type="range" id="sr-fs-slider" min="13" max="28" value="18"></div>
+            <div class="sr-srow"><label>Line Height: <span id="sr-lh-label">1.85</span></label><input type="range" id="sr-lh-slider" min="1.2" max="2.5" step="0.05" value="1.85"></div>
+            <div class="sr-srow"><label>Font Family</label><select id="sr-ff-select"><option value="Georgia, serif">Georgia (Serif)</option><option value="system-ui, sans-serif">Sans-Serif</option><option value="'Courier New', monospace">Monospace</option></select></div>
+            <div class="sr-srow"><label>Max Width: <span id="sr-mw-label">760</span>px</label><input type="range" id="sr-mw-slider" min="400" max="1100" step="20" value="760"></div>
+        </div>
+
+        <div id="sr-main">
+            <div id="sr-home"></div>
+            <div id="sr-vol-page" style="display:none"></div>
+            <div id="sr-reader-page" style="display:none;height:100%;">
+                <div id="sr-reader-nav">
+                    <button id="sr-prev">&#8592; Prev</button>
+                    <select id="sr-ch-select"></select>
+                    <button id="sr-next">Next &#8594;</button>
+                </div>
+                <div id="sr-content-wrap"><div id="sr-content"></div></div>
+            </div>
+        </div>
+    \`;
+
+    document.body.appendChild(backdrop);
+
+    // =========================================================
+    // HELPERS
+    // =========================================================
+    const $ = id => document.getElementById(id);
+    function showOnly(pageId) {
+        ["sr-home","sr-vol-page","sr-reader-page"].forEach(id => $(id).style.display = (id===pageId ? (id==="sr-reader-page"?"flex":"block") : "none"));
+        if (pageId==="sr-reader-page") $(pageId).style.flexDirection = "column";
+    }
+    function setChBar(txt) { $("sr-ch-bar").textContent = txt; }
+
+    function getScrollPct() {
+        const w = $("sr-content-wrap");
+        if (!w || w.scrollHeight <= w.clientHeight) return 0;
+        return Math.round(w.scrollTop / (w.scrollHeight - w.clientHeight) * 1000) / 10;
+    }
+    function restoreScroll(pct) {
+        if (!pct || pct <= 0) return;
+        const w = $("sr-content-wrap");
+        if (!w) return;
+        setTimeout(() => { w.scrollTop = (pct / 100) * (w.scrollHeight - w.clientHeight); }, 150);
+    }
+
+    // =========================================================
+    // RENDER: HOME
+    // =========================================================
+    function renderHome() {
+        App.page = "home";
+        stopScrollSave();
+        showOnly("sr-home");
+        $("sr-back").classList.remove("sr-vis");
+        $("sr-settings-btn").classList.remove("sr-vis");
+        setChBar("");
+
+        // Find most-recent progress
+        let contVol = null, contProg = null;
+        for (const v of VOLUMES) {
+            const p = Progress.get(v.key);
+            if (p && p.chapterId) { contVol = v; contProg = p; break; }
         }
 
-        function loadProgress(volumeKey: string): { chapterId: string; scrollPct: number } | null {
-            try {
-                const chapterId = $storage.get<string>("progress." + volumeKey + ".chapterId");
-                const scrollPct = $storage.get<number>("progress." + volumeKey + ".scrollPct");
-                if (!chapterId) return null;
-                return { chapterId, scrollPct: scrollPct || 0 };
-            } catch (_) {
-                return null;
-            }
+        let contHtml = "";
+        if (contVol && contProg) {
+            const chIdx = contVol.chapters.findIndex(c => c.id === contProg.chapterId);
+            const ch = contVol.chapters[chIdx >= 0 ? chIdx : 0];
+            contHtml = \`<div class="sr-continue-banner" id="sr-cont-banner" data-key="\${contVol.key}" data-chidx="\${chIdx>=0?chIdx:0}" data-scroll="\${contProg.scrollPct}">
+                <div class="sr-continue-info">
+                    <div class="sr-continue-tag">Continue Reading</div>
+                    <div class="sr-continue-title">\${contVol.label}: \${contVol.title}</div>
+                    <div class="sr-continue-sub">\${ch.title} · \${contProg.scrollPct}% read</div>
+                </div>
+                <button class="sr-continue-cta">Resume ›</button>
+            </div>\`;
         }
 
-        // -----------------------------------------------------------------------
-        // STATE (shared to webview via channel.sync)
-        // -----------------------------------------------------------------------
-        const readerState = ctx.state<{
-            page: string;                 // "home" | "reader"
-            volumeKey: string;
-            chapterUrl: string;
-            chapterTitle: string;
-            scrollPct: number;
-            savedProgress: { chapterId: string; scrollPct: number } | null;
-        }>({
-            page: "home",
-            volumeKey: "",
-            chapterUrl: "",
-            chapterTitle: "",
-            scrollPct: 0,
-            savedProgress: null,
-        });
+        const gridHtml = VOLUMES.map(vol => {
+            const p = Progress.get(vol.key);
+            const pct = p ? p.scrollPct : 0;
+            const badge = p ? \`<span class="sr-reading-badge">Reading</span>\` : "";
+            return \`<div class="sr-vol-card" data-key="\${vol.key}">
+                <div class="sr-vol-cover">\${vol.emoji}
+                    <span class="sr-vol-num">\${vol.label}</span>
+                    \${badge}
+                    <div class="sr-pbar-wrap"><div class="sr-pbar-fill" style="width:\${pct}%"></div></div>
+                </div>
+                <div class="sr-vol-info">
+                    <div class="sr-vol-name">\${vol.title}</div>
+                    <div class="sr-vol-sub">\${vol.chapters.length} chapters</div>
+                </div>
+            </div>\`;
+        }).join("");
 
-        // -----------------------------------------------------------------------
-        // WEBVIEW – full screen with sidebar button
-        // -----------------------------------------------------------------------
-        const panel = ctx.newWebview({
-            slot: "screen",
-            fullWidth: true,
-            autoHeight: false,
-            height: "100vh",
-            sidebar: {
-                label: "Slime Reader",
-                icon: `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>`,
-            },
-        });
+        $("sr-home").innerHTML = \`
+            <div class="sr-hero">
+                <div class="sr-hero-emoji">🟢</div>
+                <div>
+                    <h1>That Time I Got Reincarnated as a Slime</h1>
+                    <p>All 21 light novel volumes · Your reading progress is saved automatically</p>
+                </div>
+            </div>
+            \${contHtml}
+            <div class="sr-sec">All Volumes</div>
+            <div class="sr-grid">\${gridHtml}</div>
+        \`;
 
-        // Sync state → webview
-        panel.channel.sync("state", readerState);
-
-        // Handle save-progress event from webview
-        panel.channel.on("save-progress", (data: { volumeKey: string; chapterId: string; scrollPct: number }) => {
-            if (!data || !data.volumeKey) return;
-            saveProgress(data.volumeKey, data.chapterId, data.scrollPct);
-            // Update synced state so "continue reading" badge refreshes
-            readerState.set(prev => ({
-                ...prev,
-                savedProgress: { chapterId: data.chapterId, scrollPct: data.scrollPct },
-            }));
-        });
-
-        // Handle load-progress request from webview
-        panel.channel.on("load-progress", (volumeKey: string) => {
-            const progress = loadProgress(volumeKey);
-            readerState.set(prev => ({
-                ...prev,
-                volumeKey,
-                savedProgress: progress,
-            }));
-        });
-
-        // Handle navigate-to-reader: webview picked a volume+chapter
-        panel.channel.on("open-reader", (data: { volumeKey: string; chapterUrl: string; chapterTitle: string }) => {
-            const progress = loadProgress(data.volumeKey);
-            readerState.set({
-                page: "reader",
-                volumeKey: data.volumeKey,
-                chapterUrl: data.chapterUrl,
-                chapterTitle: data.chapterTitle,
-                scrollPct: 0,
-                savedProgress: progress,
+        $("sr-home").querySelectorAll(".sr-vol-card").forEach(card => {
+            card.addEventListener("click", () => {
+                const vol = VOLUMES.find(v => v.key === card.dataset.key);
+                if (vol) renderVolume(vol);
             });
         });
 
-        // Handle back to home
-        panel.channel.on("go-home", (_) => {
-            readerState.set(prev => ({ ...prev, page: "home" }));
-        });
-
-        // -----------------------------------------------------------------------
-        // HTML CONTENT
-        // The webview itself fetches tensurafan.github.io pages via fetch().
-        // Progress is restored by scrolling to the saved percentage.
-        // -----------------------------------------------------------------------
-        panel.setContent(() => `<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Slime Reader</title>
-    <style>
-        /* ---- Reset & Base ---- */
-        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
-        html {
-            color-scheme: dark;
-            height: 100%;
-        }
-
-        body {
-            background: #0d1117;
-            color: #e2e8f0;
-            font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
-            height: 100%;
-            overflow: hidden;
-        }
-
-        /* ---- Layout ---- */
-        #app {
-            display: flex;
-            flex-direction: column;
-            height: 100vh;
-            overflow: hidden;
-        }
-
-        /* ---- Top Bar ---- */
-        #topbar {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            padding: 12px 20px;
-            background: #161b22;
-            border-bottom: 1px solid #30363d;
-            flex-shrink: 0;
-            z-index: 10;
-        }
-
-        #topbar .logo {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            font-weight: 700;
-            font-size: 1.1rem;
-            color: #7ee8a2;
-        }
-
-        #topbar .logo svg { color: #7ee8a2; }
-
-        #back-btn {
-            background: transparent;
-            border: 1px solid #30363d;
-            color: #8b949e;
-            padding: 6px 12px;
-            border-radius: 6px;
-            cursor: pointer;
-            font-size: 0.85rem;
-            display: none;
-            align-items: center;
-            gap: 6px;
-            transition: all 0.2s;
-        }
-        #back-btn:hover { background: #21262d; color: #e2e8f0; }
-        #back-btn.visible { display: flex; }
-
-        #chapter-title-bar {
-            flex: 1;
-            font-size: 0.9rem;
-            color: #8b949e;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-        }
-
-        #reader-settings-btn {
-            background: transparent;
-            border: 1px solid #30363d;
-            color: #8b949e;
-            padding: 6px 10px;
-            border-radius: 6px;
-            cursor: pointer;
-            display: none;
-            align-items: center;
-        }
-        #reader-settings-btn:hover { background: #21262d; }
-        #reader-settings-btn.visible { display: flex; }
-
-        /* ---- Main Content Area ---- */
-        #main {
-            flex: 1;
-            overflow-y: auto;
-            overflow-x: hidden;
-            position: relative;
-        }
-
-        /* ---- Home Page ---- */
-        #home-page {
-            padding: 32px 24px;
-            max-width: 1100px;
-            margin: 0 auto;
-        }
-
-        .hero-banner {
-            background: linear-gradient(135deg, #1a2332 0%, #0d2137 50%, #1a1a2e 100%);
-            border: 1px solid #30363d;
-            border-radius: 16px;
-            padding: 40px 48px;
-            margin-bottom: 40px;
-            display: flex;
-            align-items: center;
-            gap: 32px;
-            position: relative;
-            overflow: hidden;
-        }
-
-        .hero-banner::before {
-            content: "";
-            position: absolute;
-            top: -50px; right: -50px;
-            width: 300px; height: 300px;
-            background: radial-gradient(circle, rgba(126,232,162,0.08) 0%, transparent 70%);
-            pointer-events: none;
-        }
-
-        .hero-slime {
-            font-size: 64px;
-            flex-shrink: 0;
-            filter: drop-shadow(0 0 20px rgba(126,232,162,0.4));
-        }
-
-        .hero-text h1 {
-            font-size: 1.8rem;
-            font-weight: 800;
-            color: #7ee8a2;
-            margin-bottom: 8px;
-            line-height: 1.2;
-        }
-
-        .hero-text p {
-            color: #8b949e;
-            font-size: 0.95rem;
-            line-height: 1.6;
-            max-width: 500px;
-        }
-
-        .section-title {
-            font-size: 1.1rem;
-            font-weight: 700;
-            color: #c9d1d9;
-            margin-bottom: 20px;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
-
-        .section-title::after {
-            content: "";
-            flex: 1;
-            height: 1px;
-            background: #21262d;
-        }
-
-        /* Volume Grid */
-        .volume-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-            gap: 20px;
-            margin-bottom: 48px;
-        }
-
-        .volume-card {
-            background: #161b22;
-            border: 1px solid #21262d;
-            border-radius: 12px;
-            overflow: hidden;
-            cursor: pointer;
-            transition: all 0.2s;
-            position: relative;
-        }
-
-        .volume-card:hover {
-            border-color: #7ee8a2;
-            transform: translateY(-2px);
-            box-shadow: 0 8px 24px rgba(0,0,0,0.4);
-        }
-
-        .volume-cover {
-            width: 100%;
-            aspect-ratio: 2/3;
-            background: linear-gradient(135deg, #1f2a38, #0d1a28);
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            font-size: 2rem;
-            border-bottom: 1px solid #21262d;
-            position: relative;
-            overflow: hidden;
-        }
-
-        .volume-cover img {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
-            position: absolute;
-            inset: 0;
-        }
-
-        .volume-cover .vol-num {
-            font-size: 0.65rem;
-            font-weight: 700;
-            letter-spacing: 0.1em;
-            text-transform: uppercase;
-            color: #7ee8a2;
-            background: rgba(0,0,0,0.7);
-            padding: 2px 8px;
-            border-radius: 4px;
-            position: absolute;
-            top: 8px; left: 8px;
-            z-index: 2;
-        }
-
-        .progress-bar-wrap {
-            position: absolute;
-            bottom: 0; left: 0; right: 0;
-            height: 3px;
-            background: rgba(255,255,255,0.1);
-        }
-
-        .progress-bar-fill {
-            height: 100%;
-            background: #7ee8a2;
-            transition: width 0.3s;
-        }
-
-        .volume-info {
-            padding: 10px 12px 14px;
-        }
-
-        .volume-info .vol-title {
-            font-size: 0.82rem;
-            font-weight: 600;
-            color: #c9d1d9;
-            line-height: 1.3;
-            margin-bottom: 4px;
-        }
-
-        .volume-info .vol-sub {
-            font-size: 0.72rem;
-            color: #6e7681;
-        }
-
-        .continue-badge {
-            position: absolute;
-            top: 8px; right: 8px;
-            background: #7ee8a2;
-            color: #0d1117;
-            font-size: 0.6rem;
-            font-weight: 800;
-            text-transform: uppercase;
-            letter-spacing: 0.08em;
-            padding: 2px 6px;
-            border-radius: 4px;
-            z-index: 2;
-        }
-
-        /* ---- Volume Detail / Chapter List ---- */
-        #volume-page {
-            padding: 32px 24px;
-            max-width: 900px;
-            margin: 0 auto;
-        }
-
-        .volume-detail-header {
-            display: flex;
-            gap: 24px;
-            margin-bottom: 32px;
-            padding-bottom: 24px;
-            border-bottom: 1px solid #21262d;
-        }
-
-        .volume-detail-cover {
-            width: 120px;
-            flex-shrink: 0;
-            aspect-ratio: 2/3;
-            background: linear-gradient(135deg, #1f2a38, #0d1a28);
-            border-radius: 8px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 2.5rem;
-            border: 1px solid #30363d;
-            overflow: hidden;
-        }
-
-        .volume-detail-cover img {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
-        }
-
-        .volume-detail-meta h2 {
-            font-size: 1.4rem;
-            font-weight: 700;
-            color: #c9d1d9;
-            margin-bottom: 6px;
-        }
-
-        .volume-detail-meta p {
-            color: #8b949e;
-            font-size: 0.9rem;
-            margin-bottom: 12px;
-        }
-
-        .continue-btn {
-            background: #7ee8a2;
-            color: #0d1117;
-            border: none;
-            padding: 8px 18px;
-            border-radius: 8px;
-            font-weight: 700;
-            font-size: 0.9rem;
-            cursor: pointer;
-            transition: opacity 0.2s;
-        }
-
-        .continue-btn:hover { opacity: 0.85; }
-
-        .chapter-list {
-            display: flex;
-            flex-direction: column;
-            gap: 4px;
-        }
-
-        .chapter-item {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            padding: 12px 16px;
-            background: #161b22;
-            border: 1px solid #21262d;
-            border-radius: 8px;
-            cursor: pointer;
-            transition: all 0.15s;
-        }
-
-        .chapter-item:hover {
-            background: #1c2128;
-            border-color: #30363d;
-        }
-
-        .chapter-item.active {
-            border-color: #7ee8a2;
-            background: rgba(126,232,162,0.06);
-        }
-
-        .chapter-item .ch-icon {
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-            background: #30363d;
-            flex-shrink: 0;
-        }
-
-        .chapter-item.active .ch-icon { background: #7ee8a2; }
-
-        .chapter-item .ch-title {
-            flex: 1;
-            font-size: 0.9rem;
-            color: #c9d1d9;
-        }
-
-        .chapter-item.active .ch-title { color: #7ee8a2; font-weight: 600; }
-
-        .ch-bookmark { font-size: 0.75rem; color: #7ee8a2; flex-shrink: 0; }
-
-        /* ---- Reader Page ---- */
-        #reader-page {
-            display: flex;
-            flex-direction: column;
-            height: 100%;
-            overflow: hidden;
-        }
-
-        #reader-nav {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            padding: 8px 16px;
-            background: #161b22;
-            border-bottom: 1px solid #21262d;
-            flex-shrink: 0;
-        }
-
-        #reader-nav button {
-            background: #21262d;
-            border: 1px solid #30363d;
-            color: #c9d1d9;
-            padding: 6px 14px;
-            border-radius: 6px;
-            cursor: pointer;
-            font-size: 0.85rem;
-            white-space: nowrap;
-            transition: all 0.15s;
-        }
-
-        #reader-nav button:hover:not(:disabled) { background: #30363d; }
-        #reader-nav button:disabled { opacity: 0.3; cursor: not-allowed; }
-
-        #chapter-select {
-            flex: 1;
-            background: #21262d;
-            border: 1px solid #30363d;
-            color: #c9d1d9;
-            padding: 6px 10px;
-            border-radius: 6px;
-            font-size: 0.85rem;
-        }
-
-        #reader-content-wrap {
-            flex: 1;
-            overflow-y: auto;
-            overflow-x: hidden;
-        }
-
-        #reader-content {
-            max-width: 760px;
-            margin: 0 auto;
-            padding: 40px 32px 80px;
-            font-size: 18px;
-            line-height: 1.85;
-            color: #e2e8f0;
-            font-family: 'Georgia', serif;
-        }
-
-        #reader-content p { margin-bottom: 1.2em; }
-        #reader-content img { max-width: 100%; border-radius: 8px; margin: 12px 0; }
-        #reader-content h1, #reader-content h2, #reader-content h3 {
-            font-family: system-ui, sans-serif;
-            color: #7ee8a2;
-            margin: 1.5em 0 0.5em;
-        }
-
-        /* ---- Settings Panel ---- */
-        #settings-panel {
-            position: fixed;
-            top: 56px; right: 0;
-            width: 280px;
-            background: #161b22;
-            border: 1px solid #30363d;
-            border-radius: 0 0 0 12px;
-            padding: 16px;
-            z-index: 100;
-            display: none;
-            box-shadow: -4px 4px 24px rgba(0,0,0,0.5);
-        }
-        #settings-panel.open { display: block; }
-
-        .settings-row {
-            margin-bottom: 16px;
-        }
-
-        .settings-row label {
-            display: block;
-            font-size: 0.8rem;
-            color: #8b949e;
-            margin-bottom: 6px;
-            text-transform: uppercase;
-            letter-spacing: 0.06em;
-        }
-
-        .settings-row input[type=range] {
-            width: 100%;
-            accent-color: #7ee8a2;
-        }
-
-        .settings-row select {
-            width: 100%;
-            background: #21262d;
-            border: 1px solid #30363d;
-            color: #c9d1d9;
-            padding: 6px 8px;
-            border-radius: 6px;
-            font-size: 0.85rem;
-        }
-
-        .theme-btns {
-            display: flex;
-            gap: 6px;
-        }
-
-        .theme-btn {
-            flex: 1;
-            padding: 6px;
-            border-radius: 6px;
-            border: 2px solid #30363d;
-            cursor: pointer;
-            font-size: 0.78rem;
-            font-weight: 600;
-        }
-
-        .theme-btn.active { border-color: #7ee8a2; }
-        .theme-btn[data-theme="dark"] { background: #0d1117; color: #e2e8f0; }
-        .theme-btn[data-theme="sepia"] { background: #f4ecd8; color: #5b4636; }
-        .theme-btn[data-theme="light"] { background: #f5f5f5; color: #1a1a1a; }
-
-        /* ---- Loading Spinner ---- */
-        .spinner {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            height: 200px;
-            gap: 16px;
-        }
-
-        .spinner-ring {
-            width: 40px;
-            height: 40px;
-            border: 3px solid #21262d;
-            border-top-color: #7ee8a2;
-            border-radius: 50%;
-            animation: spin 0.8s linear infinite;
-        }
-
-        @keyframes spin { to { transform: rotate(360deg); } }
-
-        .spinner p { color: #6e7681; font-size: 0.9rem; }
-
-        /* ---- Error / Empty ---- */
-        .error-box {
-            margin: 40px auto;
-            max-width: 480px;
-            background: #1c1c1c;
-            border: 1px solid #f0883e44;
-            border-radius: 12px;
-            padding: 24px;
-            text-align: center;
-            color: #f0883e;
-        }
-
-        .error-box p { margin-top: 8px; color: #8b949e; font-size: 0.9rem; }
-        .error-box button {
-            margin-top: 16px;
-            background: #f0883e;
-            color: white;
-            border: none;
-            padding: 8px 20px;
-            border-radius: 6px;
-            cursor: pointer;
-            font-weight: 600;
-        }
-
-        /* Scrollbar */
-        ::-webkit-scrollbar { width: 6px; }
-        ::-webkit-scrollbar-track { background: transparent; }
-        ::-webkit-scrollbar-thumb { background: #30363d; border-radius: 3px; }
-        ::-webkit-scrollbar-thumb:hover { background: #484f58; }
-    </style>
-</head>
-<body>
-<div id="app">
-    <!-- TOP BAR -->
-    <div id="topbar">
-        <div class="logo">
-            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none"
-                 stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/>
-                <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>
-            </svg>
-            Slime Reader
-        </div>
-        <button id="back-btn">
-            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none"
-                 stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <polyline points="15 18 9 12 15 6"/>
-            </svg>
-            Back
-        </button>
-        <span id="chapter-title-bar"></span>
-        <button id="reader-settings-btn" title="Reader settings">
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none"
-                 stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <circle cx="12" cy="12" r="3"/>
-                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
-            </svg>
-        </button>
-    </div>
-
-    <!-- SETTINGS PANEL -->
-    <div id="settings-panel">
-        <div class="settings-row">
-            <label>Theme</label>
-            <div class="theme-btns">
-                <button class="theme-btn active" data-theme="dark">Dark</button>
-                <button class="theme-btn" data-theme="sepia">Sepia</button>
-                <button class="theme-btn" data-theme="light">Light</button>
-            </div>
-        </div>
-        <div class="settings-row">
-            <label>Font Size: <span id="font-size-label">18</span>px</label>
-            <input type="range" id="font-size-slider" min="13" max="28" value="18">
-        </div>
-        <div class="settings-row">
-            <label>Line Height: <span id="line-height-label">1.85</span></label>
-            <input type="range" id="line-height-slider" min="1.2" max="2.5" step="0.05" value="1.85">
-        </div>
-        <div class="settings-row">
-            <label>Font Family</label>
-            <select id="font-family-select">
-                <option value="Georgia, serif">Georgia (Serif)</option>
-                <option value="system-ui, sans-serif">System Sans-Serif</option>
-                <option value="'Courier New', monospace">Courier (Mono)</option>
-            </select>
-        </div>
-        <div class="settings-row">
-            <label>Max Width: <span id="max-width-label">760</span>px</label>
-            <input type="range" id="max-width-slider" min="400" max="1100" step="20" value="760">
-        </div>
-    </div>
-
-    <!-- MAIN -->
-    <div id="main">
-        <div id="home-page"></div>
-        <div id="volume-page" style="display:none;"></div>
-        <div id="reader-page" style="display:none;">
-            <div id="reader-nav">
-                <button id="prev-ch-btn">← Prev</button>
-                <select id="chapter-select"></select>
-                <button id="next-ch-btn">Next →</button>
-            </div>
-            <div id="reader-content-wrap">
-                <div id="reader-content"></div>
-            </div>
-        </div>
-    </div>
-</div>
-
-<script>
-(function() {
-"use strict";
-
-// ============================================================
-// VOLUME CATALOGUE
-// tensurafan.github.io uses a predictable URL structure.
-// Adjust vol/chapterSlugs as needed if the site changes.
-// ============================================================
-const BASE = "https://tensurafan.github.io";
-
-const VOLUMES = [
-    { key: "vol1",  label: "Volume 1",  title: "That Time I Got Reincarnated as a Slime", emoji: "🟢",
-      chapterBase: BASE + "/vol1/",
-      chapters: [
-        { id: "prologue", title: "Prologue", path: "prologue/" },
-        { id: "ch1", title: "Chapter 1 – Birth of a Slime", path: "ch1/" },
-        { id: "ch2", title: "Chapter 2 – Starting a New Life", path: "ch2/" },
-        { id: "ch3", title: "Chapter 3 – Naming", path: "ch3/" },
-        { id: "ch4", title: "Chapter 4 – Meeting with the Goblins", path: "ch4/" },
-        { id: "ch5", title: "Chapter 5 – Goblins and Direwolves", path: "ch5/" },
-        { id: "ch6", title: "Chapter 6 – Resolve", path: "ch6/" },
-        { id: "ch7", title: "Chapter 7 – Jura Forest", path: "ch7/" },
-        { id: "epilogue", title: "Epilogue", path: "epilogue/" },
-      ]
-    },
-    { key: "vol2",  label: "Volume 2",  title: "The Dwarven Kingdom Arc", emoji: "⚒️",
-      chapterBase: BASE + "/vol2/",
-      chapters: [
-        { id: "prologue", title: "Prologue", path: "prologue/" },
-        { id: "ch1", title: "Chapter 1 – Dwarves and Elves", path: "ch1/" },
-        { id: "ch2", title: "Chapter 2 – Kingdom of the Dwarves", path: "ch2/" },
-        { id: "ch3", title: "Chapter 3 – Trouble in the Royal Capital", path: "ch3/" },
-        { id: "ch4", title: "Chapter 4 – Orc Disaster", path: "ch4/" },
-        { id: "ch5", title: "Chapter 5 – The Orc Lord", path: "ch5/" },
-        { id: "ch6", title: "Chapter 6 – The Battle Begins", path: "ch6/" },
-        { id: "epilogue", title: "Epilogue", path: "epilogue/" },
-      ]
-    },
-    { key: "vol3",  label: "Volume 3",  title: "The Orc Disaster Arc", emoji: "🐗",
-      chapterBase: BASE + "/vol3/",
-      chapters: [
-        { id: "prologue", title: "Prologue", path: "prologue/" },
-        { id: "ch1", title: "Chapter 1 – Gathering Forces", path: "ch1/" },
-        { id: "ch2", title: "Chapter 2 – The Lizardmen", path: "ch2/" },
-        { id: "ch3", title: "Chapter 3 – Entering the Fray", path: "ch3/" },
-        { id: "ch4", title: "Chapter 4 – Encounter with the Orc Lord", path: "ch4/" },
-        { id: "ch5", title: "Chapter 5 – Rimuru vs Orc Lord", path: "ch5/" },
-        { id: "ch6", title: "Chapter 6 – Aftermath", path: "ch6/" },
-        { id: "epilogue", title: "Epilogue", path: "epilogue/" },
-      ]
-    },
-    { key: "vol4",  label: "Volume 4",  title: "Tempest Founding Arc", emoji: "🏰",
-      chapterBase: BASE + "/vol4/",
-      chapters: [
-        { id: "prologue", title: "Prologue", path: "prologue/" },
-        { id: "ch1", title: "Chapter 1 – Peaceful Days", path: "ch1/" },
-        { id: "ch2", title: "Chapter 2 – The Demon Lords", path: "ch2/" },
-        { id: "ch3", title: "Chapter 3 – Milim's Visit", path: "ch3/" },
-        { id: "ch4", title: "Chapter 4 – Founding Ceremony", path: "ch4/" },
-        { id: "ch5", title: "Chapter 5 – Intrigue", path: "ch5/" },
-        { id: "epilogue", title: "Epilogue", path: "epilogue/" },
-      ]
-    },
-    { key: "vol5",  label: "Volume 5",  title: "Kingdom of Farmus", emoji: "⚔️",
-      chapterBase: BASE + "/vol5/",
-      chapters: [
-        { id: "prologue", title: "Prologue", path: "prologue/" },
-        { id: "ch1", title: "Chapter 1 – Kingdom of Farmus", path: "ch1/" },
-        { id: "ch2", title: "Chapter 2 – Holy Knight", path: "ch2/" },
-        { id: "ch3", title: "Chapter 3 – Invasion", path: "ch3/" },
-        { id: "ch4", title: "Chapter 4 – Despair", path: "ch4/" },
-        { id: "ch5", title: "Chapter 5 – Rimuru's Rage", path: "ch5/" },
-        { id: "epilogue", title: "Epilogue", path: "epilogue/" },
-      ]
-    },
-    { key: "vol6",  label: "Volume 6",  title: "Walpurgis", emoji: "🌙",
-      chapterBase: BASE + "/vol6/",
-      chapters: [
-        { id: "prologue", title: "Prologue", path: "prologue/" },
-        { id: "ch1", title: "Chapter 1 – Demon Lord", path: "ch1/" },
-        { id: "ch2", title: "Chapter 2 – Walpurgis", path: "ch2/" },
-        { id: "ch3", title: "Chapter 3 – Conflict", path: "ch3/" },
-        { id: "ch4", title: "Chapter 4 – Resolution", path: "ch4/" },
-        { id: "epilogue", title: "Epilogue", path: "epilogue/" },
-      ]
-    },
-    { key: "vol7",  label: "Volume 7",  title: "Eurazania Arc", emoji: "🐾",
-      chapterBase: BASE + "/vol7/",
-      chapters: [
-        { id: "prologue", title: "Prologue", path: "prologue/" },
-        { id: "ch1", title: "Chapter 1 – Diplomatic Mission", path: "ch1/" },
-        { id: "ch2", title: "Chapter 2 – Beast Kingdom", path: "ch2/" },
-        { id: "ch3", title: "Chapter 3 – Tension", path: "ch3/" },
-        { id: "ch4", title: "Chapter 4 – War", path: "ch4/" },
-        { id: "epilogue", title: "Epilogue", path: "epilogue/" },
-      ]
-    },
-    { key: "vol8",  label: "Volume 8",  title: "Labyrinth Arc", emoji: "🌀",
-      chapterBase: BASE + "/vol8/",
-      chapters: [
-        { id: "prologue", title: "Prologue", path: "prologue/" },
-        { id: "ch1", title: "Chapter 1 – The Labyrinth", path: "ch1/" },
-        { id: "ch2", title: "Chapter 2 – Veldora's Return", path: "ch2/" },
-        { id: "ch3", title: "Chapter 3 – Trial", path: "ch3/" },
-        { id: "ch4", title: "Chapter 4 – Awakening", path: "ch4/" },
-        { id: "epilogue", title: "Epilogue", path: "epilogue/" },
-      ]
-    },
-    { key: "vol9",  label: "Volume 9",  title: "Eurazania Restored", emoji: "🌿",
-      chapterBase: BASE + "/vol9/",
-      chapters: [
-        { id: "prologue", title: "Prologue", path: "prologue/" },
-        { id: "ch1", title: "Chapter 1 – Restoration", path: "ch1/" },
-        { id: "ch2", title: "Chapter 2 – Albis", path: "ch2/" },
-        { id: "ch3", title: "Chapter 3 – Cooperation", path: "ch3/" },
-        { id: "ch4", title: "Chapter 4 – New Bonds", path: "ch4/" },
-        { id: "epilogue", title: "Epilogue", path: "epilogue/" },
-      ]
-    },
-    { key: "vol10", label: "Volume 10", title: "Tenma Great War", emoji: "💥",
-      chapterBase: BASE + "/vol10/",
-      chapters: [
-        { id: "prologue", title: "Prologue", path: "prologue/" },
-        { id: "ch1", title: "Chapter 1 – Prelude to War", path: "ch1/" },
-        { id: "ch2", title: "Chapter 2 – Eastern Empire", path: "ch2/" },
-        { id: "ch3", title: "Chapter 3 – The Angels Descend", path: "ch3/" },
-        { id: "ch4", title: "Chapter 4 – Rimuru's Resolve", path: "ch4/" },
-        { id: "ch5", title: "Chapter 5 – True Demon Lord", path: "ch5/" },
-        { id: "epilogue", title: "Epilogue", path: "epilogue/" },
-      ]
-    },
-    { key: "vol11", label: "Volume 11", title: "King of Monsters", emoji: "👑",
-      chapterBase: BASE + "/vol11/",
-      chapters: [
-        { id: "prologue", title: "Prologue", path: "prologue/" },
-        { id: "ch1", title: "Chapter 1 – Aftermath", path: "ch1/" },
-        { id: "ch2", title: "Chapter 2 – Reconstruction", path: "ch2/" },
-        { id: "ch3", title: "Chapter 3 – New Enemy", path: "ch3/" },
-        { id: "ch4", title: "Chapter 4 – King of Monsters", path: "ch4/" },
-        { id: "epilogue", title: "Epilogue", path: "epilogue/" },
-      ]
-    },
-    { key: "vol12", label: "Volume 12", title: "Sealed Foes", emoji: "🔒",
-      chapterBase: BASE + "/vol12/",
-      chapters: [
-        { id: "prologue", title: "Prologue", path: "prologue/" },
-        { id: "ch1", title: "Chapter 1 – Ancient Gods", path: "ch1/" },
-        { id: "ch2", title: "Chapter 2 – The Sealed One", path: "ch2/" },
-        { id: "ch3", title: "Chapter 3 – Breaking Seals", path: "ch3/" },
-        { id: "ch4", title: "Chapter 4 – Confrontation", path: "ch4/" },
-        { id: "epilogue", title: "Epilogue", path: "epilogue/" },
-      ]
-    },
-    { key: "vol13", label: "Volume 13", title: "Road to the Empire", emoji: "🗺️",
-      chapterBase: BASE + "/vol13/",
-      chapters: [
-        { id: "prologue", title: "Prologue", path: "prologue/" },
-        { id: "ch1", title: "Chapter 1 – Empire's Schemes", path: "ch1/" },
-        { id: "ch2", title: "Chapter 2 – Infiltration", path: "ch2/" },
-        { id: "ch3", title: "Chapter 3 – Clash", path: "ch3/" },
-        { id: "epilogue", title: "Epilogue", path: "epilogue/" },
-      ]
-    },
-    { key: "vol14", label: "Volume 14", title: "Invaders", emoji: "🌪️",
-      chapterBase: BASE + "/vol14/",
-      chapters: [
-        { id: "prologue", title: "Prologue", path: "prologue/" },
-        { id: "ch1", title: "Chapter 1 – Invasion Begins", path: "ch1/" },
-        { id: "ch2", title: "Chapter 2 – Desperation", path: "ch2/" },
-        { id: "ch3", title: "Chapter 3 – Counterattack", path: "ch3/" },
-        { id: "ch4", title: "Chapter 4 – End of War", path: "ch4/" },
-        { id: "epilogue", title: "Epilogue", path: "epilogue/" },
-      ]
-    },
-    { key: "vol15", label: "Volume 15", title: "The Empire's Fall", emoji: "🏚️",
-      chapterBase: BASE + "/vol15/",
-      chapters: [
-        { id: "prologue", title: "Prologue", path: "prologue/" },
-        { id: "ch1", title: "Chapter 1 – Shattered Empire", path: "ch1/" },
-        { id: "ch2", title: "Chapter 2 – The Emperor", path: "ch2/" },
-        { id: "ch3", title: "Chapter 3 – Final Battle", path: "ch3/" },
-        { id: "epilogue", title: "Epilogue", path: "epilogue/" },
-      ]
-    },
-    { key: "vol16", label: "Volume 16", title: "Beginning of the End", emoji: "🌌",
-      chapterBase: BASE + "/vol16/",
-      chapters: [
-        { id: "prologue", title: "Prologue", path: "prologue/" },
-        { id: "ch1", title: "Chapter 1", path: "ch1/" },
-        { id: "ch2", title: "Chapter 2", path: "ch2/" },
-        { id: "ch3", title: "Chapter 3", path: "ch3/" },
-        { id: "epilogue", title: "Epilogue", path: "epilogue/" },
-      ]
-    },
-    { key: "vol17", label: "Volume 17", title: "Dragon vs Demon", emoji: "🐉",
-      chapterBase: BASE + "/vol17/",
-      chapters: [
-        { id: "prologue", title: "Prologue", path: "prologue/" },
-        { id: "ch1", title: "Chapter 1", path: "ch1/" },
-        { id: "ch2", title: "Chapter 2", path: "ch2/" },
-        { id: "ch3", title: "Chapter 3", path: "ch3/" },
-        { id: "epilogue", title: "Epilogue", path: "epilogue/" },
-      ]
-    },
-    { key: "vol18", label: "Volume 18", title: "King of Tempest", emoji: "⚡",
-      chapterBase: BASE + "/vol18/",
-      chapters: [
-        { id: "prologue", title: "Prologue", path: "prologue/" },
-        { id: "ch1", title: "Chapter 1", path: "ch1/" },
-        { id: "ch2", title: "Chapter 2", path: "ch2/" },
-        { id: "ch3", title: "Chapter 3", path: "ch3/" },
-        { id: "epilogue", title: "Epilogue", path: "epilogue/" },
-      ]
-    },
-    { key: "vol19", label: "Volume 19", title: "The True Dragon", emoji: "🌟",
-      chapterBase: BASE + "/vol19/",
-      chapters: [
-        { id: "prologue", title: "Prologue", path: "prologue/" },
-        { id: "ch1", title: "Chapter 1", path: "ch1/" },
-        { id: "ch2", title: "Chapter 2", path: "ch2/" },
-        { id: "epilogue", title: "Epilogue", path: "epilogue/" },
-      ]
-    },
-    { key: "vol20", label: "Volume 20", title: "Beyond the Stars", emoji: "✨",
-      chapterBase: BASE + "/vol20/",
-      chapters: [
-        { id: "prologue", title: "Prologue", path: "prologue/" },
-        { id: "ch1", title: "Chapter 1", path: "ch1/" },
-        { id: "ch2", title: "Chapter 2", path: "ch2/" },
-        { id: "epilogue", title: "Epilogue", path: "epilogue/" },
-      ]
-    },
-    { key: "vol21", label: "Volume 21", title: "Finale", emoji: "🏁",
-      chapterBase: BASE + "/vol21/",
-      chapters: [
-        { id: "prologue", title: "Prologue", path: "prologue/" },
-        { id: "ch1", title: "Chapter 1", path: "ch1/" },
-        { id: "ch2", title: "Chapter 2", path: "ch2/" },
-        { id: "ch3", title: "Chapter 3 – Final Chapter", path: "ch3/" },
-        { id: "epilogue", title: "Epilogue", path: "epilogue/" },
-      ]
-    },
-];
-
-// ============================================================
-// LOCAL PROGRESS STORAGE (synced with plugin $storage via channel)
-// We also keep a local Map here so the UI can react instantly.
-// ============================================================
-const Progress = {
-    _cache: {},    // { [volumeKey]: { chapterId, scrollPct } }
-
-    get: function(volumeKey) {
-        return Progress._cache[volumeKey] || null;
-    },
-
-    set: function(volumeKey, chapterId, scrollPct) {
-        Progress._cache[volumeKey] = { chapterId: chapterId, scrollPct: scrollPct };
-        if (window.webview) {
-            window.webview.send("save-progress", {
-                volumeKey: volumeKey,
-                chapterId: chapterId,
-                scrollPct: scrollPct
+        const cb = $("sr-cont-banner");
+        if (cb) {
+            cb.addEventListener("click", () => {
+                const vol = VOLUMES.find(v => v.key === cb.dataset.key);
+                if (vol) renderReader(vol, parseInt(cb.dataset.chidx)||0, parseFloat(cb.dataset.scroll)||0);
             });
         }
     }
-};
 
-// ============================================================
-// READER SETTINGS
-// ============================================================
-const Settings = {
-    _data: {
-        theme: "dark",
-        fontSize: 18,
-        lineHeight: 1.85,
-        fontFamily: "Georgia, serif",
-        maxWidth: 760
-    },
+    // =========================================================
+    // RENDER: VOLUME PAGE
+    // =========================================================
+    function renderVolume(vol, autoOpen) {
+        App.page = "volume"; App.vol = vol;
+        stopScrollSave();
+        showOnly("sr-vol-page");
+        $("sr-back").classList.add("sr-vis");
+        $("sr-settings-btn").classList.remove("sr-vis");
+        setChBar(vol.label + " — " + vol.title);
 
-    _themes: {
-        dark:  { bg: "#0d1117", text: "#e2e8f0" },
-        sepia: { bg: "#f4ecd8", text: "#5b4636" },
-        light: { bg: "#f5f5f5", text: "#1a1a1a" }
-    },
+        const prog = Progress.get(vol.key);
+        const lastChId = prog ? prog.chapterId : null;
 
-    load: function() {
+        const chListHtml = vol.chapters.map((ch, idx) => {
+            const active = lastChId && ch.id === lastChId;
+            const bm = active ? \`<span class="sr-ch-bm">📖</span>\` : "";
+            return \`<div class="sr-ch-item\${active?" sr-ch-active":""}" data-idx="\${idx}">
+                <div class="sr-ch-dot"></div>
+                <span class="sr-ch-title">\${ch.title}</span>
+                \${bm}
+            </div>\`;
+        }).join("");
+
+        const progHtml = prog ? \`<div class="sr-vol-progress">\${prog.scrollPct}% through \${vol.chapters.find(c=>c.id===prog.chapterId)?.title||""}</div>\` : "";
+        const contBtn = lastChId ? \`<button class="sr-cta-btn" id="sr-vol-cont">Continue Reading</button>\` : "";
+
+        $("sr-vol-page").innerHTML = \`
+            <div class="sr-vol-hdr">
+                <div class="sr-vol-hdr-cover">\${vol.emoji}</div>
+                <div class="sr-vol-hdr-meta">
+                    <h2>\${vol.label}</h2>
+                    <p>\${vol.title} · \${vol.chapters.length} chapters</p>
+                    \${progHtml}
+                    \${contBtn}
+                </div>
+            </div>
+            <div class="sr-sec">Chapters</div>
+            <div class="sr-ch-list">\${chListHtml}</div>
+        \`;
+
+        $("sr-vol-page").querySelectorAll(".sr-ch-item").forEach(item => {
+            item.addEventListener("click", () => renderReader(vol, parseInt(item.dataset.idx)));
+        });
+
+        const vcb = $("sr-vol-cont");
+        if (vcb && lastChId) {
+            const ri = vol.chapters.findIndex(c => c.id === lastChId);
+            vcb.addEventListener("click", () => renderReader(vol, ri >= 0 ? ri : 0, prog.scrollPct));
+        }
+
+        if (typeof autoOpen === "number") renderReader(vol, autoOpen, prog ? prog.scrollPct : 0);
+    }
+
+    // =========================================================
+    // RENDER: READER
+    // =========================================================
+    let scrollSaveTimer = null;
+    function stopScrollSave() { if (scrollSaveTimer) { clearInterval(scrollSaveTimer); scrollSaveTimer = null; } }
+
+    async function renderReader(vol, chIdx, resumePct) {
+        App.page = "reader"; App.vol = vol; App.chIdx = chIdx;
+        stopScrollSave();
+        showOnly("sr-reader-page");
+        $("sr-back").classList.add("sr-vis");
+        $("sr-settings-btn").classList.add("sr-vis");
+
+        const ch = vol.chapters[chIdx];
+        setChBar(vol.label + " · " + ch.title);
+
+        // Chapter select dropdown
+        const sel = $("sr-ch-select");
+        sel.innerHTML = vol.chapters.map((c, i) => \`<option value="\${i}"\${i===chIdx?" selected":""}>\${c.title}</option>\`).join("");
+        $("sr-prev").disabled = chIdx === 0;
+        $("sr-next").disabled = chIdx === vol.chapters.length - 1;
+
+        // Show spinner
+        $("sr-content").innerHTML = \`<div class="sr-spin"><div class="sr-spin-ring"></div><p>Loading chapter…</p></div>\`;
+
+        const url = BASE + ch.path;
         try {
-            var raw = localStorage.getItem("slimereader_settings");
-            if (raw) Object.assign(Settings._data, JSON.parse(raw));
-        } catch(_) {}
-    },
+            const html = await fetchChapter(ch.path);
+            $("sr-content").innerHTML = html;
+            Settings.apply();
 
-    save: function() {
-        try { localStorage.setItem("slimereader_settings", JSON.stringify(Settings._data)); } catch(_) {}
-    },
+            // Restore scroll: prefer explicit resumePct, else saved progress if same chapter
+            const savedProg = Progress.get(vol.key);
+            const scrollTo = (typeof resumePct === "number" && resumePct > 0)
+                ? resumePct
+                : (savedProg && savedProg.chapterId === ch.id ? savedProg.scrollPct : 0);
+            restoreScroll(scrollTo);
 
-    apply: function() {
-        var s = Settings._data;
-        var rc = document.getElementById("reader-content");
-        var body = document.body;
-        var t = Settings._themes[s.theme] || Settings._themes.dark;
-        if (rc) {
-            rc.style.fontSize = s.fontSize + "px";
-            rc.style.lineHeight = s.lineHeight;
-            rc.style.fontFamily = s.fontFamily;
-            rc.style.maxWidth = s.maxWidth + "px";
-            rc.style.color = t.text;
+            // Save immediately
+            Progress.set(vol.key, ch.id, scrollTo);
+
+            // Auto-save every 3s
+            scrollSaveTimer = setInterval(() => {
+                Progress.set(vol.key, ch.id, getScrollPct());
+            }, 3000);
+
+        } catch (err) {
+            $("sr-content").innerHTML = \`
+                <div class="sr-err">
+                    <strong>⚠️ Could not load chapter</strong>
+                    <p>Failed to fetch from <a href="\${url}" target="_blank">\${url}</a></p>
+                    <p>\${err.message}</p>
+                    <button onclick="document.getElementById('sr-content').dispatchEvent(new CustomEvent('sr-retry'))">Retry</button>
+                </div>\`;
+            $("sr-content").addEventListener("sr-retry", () => renderReader(vol, chIdx, resumePct), {once:true});
         }
-        var wrap = document.getElementById("reader-content-wrap");
-        if (wrap) wrap.style.background = t.bg;
-        body.style.background = (s.theme === "dark") ? "#0d1117" : t.bg;
-
-        // Sync UI controls
-        document.querySelectorAll(".theme-btn").forEach(function(btn) {
-            btn.classList.toggle("active", btn.dataset.theme === s.theme);
-        });
-        var fs = document.getElementById("font-size-slider");
-        var lh = document.getElementById("line-height-slider");
-        var ff = document.getElementById("font-family-select");
-        var mw = document.getElementById("max-width-slider");
-        if (fs) { fs.value = s.fontSize; document.getElementById("font-size-label").textContent = s.fontSize; }
-        if (lh) { lh.value = s.lineHeight; document.getElementById("line-height-label").textContent = s.lineHeight; }
-        if (ff) ff.value = s.fontFamily;
-        if (mw) { mw.value = s.maxWidth; document.getElementById("max-width-label").textContent = s.maxWidth; }
     }
-};
 
-// ============================================================
-// APP STATE
-// ============================================================
-var App = {
-    page: "home",           // "home" | "volume" | "reader"
-    currentVolume: null,    // VOLUMES entry
-    currentChapterIdx: 0,
-    chapters: [],           // copy of currentVolume.chapters
-    scrollSaveTimer: null
-};
+    // =========================================================
+    // TOPBAR EVENTS
+    // =========================================================
+    $("sr-close").addEventListener("click", cleanup);
 
-// ============================================================
-// DOM HELPERS
-// ============================================================
-function show(id) { var el = document.getElementById(id); if (el) el.style.display = "block"; }
-function hide(id) { var el = document.getElementById(id); if (el) el.style.display = "none"; }
-function text(id, val) { var el = document.getElementById(id); if (el) el.textContent = val; }
-function q(sel) { return document.querySelector(sel); }
-
-// ============================================================
-// FETCHING CHAPTER CONTENT
-// We load the raw HTML from tensurafan.github.io and extract
-// the main content node. Because of CORS we use no-cors mode
-// and fall back gracefully.
-// ============================================================
-async function fetchChapterContent(url) {
-    var resp = await fetch(url, { mode: "cors", credentials: "omit" });
-    if (!resp.ok) throw new Error("HTTP " + resp.status);
-    var html = await resp.text();
-    var parser = new DOMParser();
-    var doc = parser.parseFromString(html, "text/html");
-
-    // Try common selectors used on GitHub Pages book sites
-    var content =
-        doc.querySelector("article") ||
-        doc.querySelector(".content") ||
-        doc.querySelector(".post-content") ||
-        doc.querySelector("main") ||
-        doc.querySelector("#content") ||
-        doc.querySelector(".markdown-body") ||
-        doc.body;
-
-    if (!content) throw new Error("No content found");
-
-    // Strip nav, header, footer, scripts, style tags
-    ["nav","header","footer","script","style","iframe",".nav",".navbar",".footer","#nav","#header","#footer"].forEach(function(sel) {
-        content.querySelectorAll(sel).forEach(function(el) { el.remove(); });
-    });
-
-    // Rewrite relative image URLs to absolute
-    content.querySelectorAll("img[src]").forEach(function(img) {
-        var src = img.getAttribute("src");
-        if (src && !src.startsWith("http")) {
-            img.setAttribute("src", new URL(src, url).href);
+    $("sr-back").addEventListener("click", () => {
+        if (App.page === "reader") {
+            Progress.set(App.vol.key, App.vol.chapters[App.chIdx].id, getScrollPct());
+            renderVolume(App.vol);
+        } else if (App.page === "volume") {
+            renderHome();
         }
     });
 
-    return content.innerHTML;
-}
-
-// ============================================================
-// SCROLL PROGRESS
-// ============================================================
-function getScrollPct() {
-    var wrap = document.getElementById("reader-content-wrap");
-    if (!wrap || wrap.scrollHeight <= wrap.clientHeight) return 0;
-    return Math.round((wrap.scrollTop / (wrap.scrollHeight - wrap.clientHeight)) * 1000) / 10;
-}
-
-function restoreScroll(targetPct) {
-    var wrap = document.getElementById("reader-content-wrap");
-    if (!wrap || targetPct <= 0) return;
-    setTimeout(function() {
-        wrap.scrollTop = (targetPct / 100) * (wrap.scrollHeight - wrap.clientHeight);
-    }, 120);
-}
-
-function startScrollSaving(volumeKey, chapterId) {
-    if (App.scrollSaveTimer) clearInterval(App.scrollSaveTimer);
-    App.scrollSaveTimer = setInterval(function() {
-        Progress.set(volumeKey, chapterId, getScrollPct());
-    }, 3000);
-}
-
-function stopScrollSaving() {
-    if (App.scrollSaveTimer) { clearInterval(App.scrollSaveTimer); App.scrollSaveTimer = null; }
-}
-
-// ============================================================
-// HOME PAGE
-// ============================================================
-function renderHome() {
-    App.page = "home";
-    stopScrollSaving();
-    hide("volume-page");
-    hide("reader-page");
-    show("home-page");
-
-    document.getElementById("back-btn").classList.remove("visible");
-    document.getElementById("reader-settings-btn").classList.remove("visible");
-    document.getElementById("chapter-title-bar").textContent = "";
-
-    var homePage = document.getElementById("home-page");
-
-    // Find any in-progress volume to show as "continue reading"
-    var continueVol = null;
-    var continueChIdx = 0;
-    for (var vi = 0; vi < VOLUMES.length; vi++) {
-        var p = Progress.get(VOLUMES[vi].key);
-        if (p && p.chapterId) { continueVol = VOLUMES[vi]; break; }
-    }
-
-    var continueHtml = "";
-    if (continueVol) {
-        var cProg = Progress.get(continueVol.key);
-        var cChIdx = continueVol.chapters.findIndex(function(c) { return c.id === cProg.chapterId; });
-        if (cChIdx < 0) cChIdx = 0;
-        continueChIdx = cChIdx;
-        continueHtml = "<div class=\"section-title\" style=\"margin-bottom:16px;\">Continue Reading</div>" +
-            "<div style=\"background:#161b22;border:1px solid #7ee8a28f;border-radius:12px;padding:20px 24px;" +
-            "margin-bottom:40px;display:flex;align-items:center;gap:20px;cursor:pointer;\" id=\"continue-reading-banner\">" +
-            "<div style=\"font-size:2.5rem;\">🟢</div>" +
-            "<div style=\"flex:1;\">" +
-            "<div style=\"font-size:0.75rem;color:#7ee8a2;text-transform:uppercase;letter-spacing:0.08em;font-weight:700;margin-bottom:4px;\">Pick up where you left off</div>" +
-            "<div style=\"font-weight:700;color:#c9d1d9;font-size:1.05rem;\">" + continueVol.label + ": " + continueVol.title + "</div>" +
-            "<div style=\"color:#8b949e;font-size:0.85rem;margin-top:3px;\">" + continueVol.chapters[cChIdx].title + " · " + cProg.scrollPct + "% read</div>" +
-            "</div>" +
-            "<button style=\"background:#7ee8a2;color:#0d1117;border:none;padding:10px 20px;border-radius:8px;font-weight:700;cursor:pointer;\">Continue</button>" +
-            "</div>";
-    }
-
-    var gridItems = VOLUMES.map(function(vol) {
-        var p = Progress.get(vol.key);
-        var pct = p ? p.scrollPct : 0;
-        var badge = p ? "<span class=\"continue-badge\">Reading</span>" : "";
-        return "<div class=\"volume-card\" data-vol-key=\"" + vol.key + "\">" +
-            "<div class=\"volume-cover\">" + vol.emoji +
-            "<span class=\"vol-num\">" + vol.label + "</span>" +
-            badge +
-            "<div class=\"progress-bar-wrap\"><div class=\"progress-bar-fill\" style=\"width:" + pct + "%\"></div></div>" +
-            "</div>" +
-            "<div class=\"volume-info\">" +
-            "<div class=\"vol-title\">" + vol.title + "</div>" +
-            "<div class=\"vol-sub\">" + vol.chapters.length + " chapters</div>" +
-            "</div></div>";
-    }).join("");
-
-    homePage.innerHTML =
-        "<div class=\"hero-banner\">" +
-        "<div class=\"hero-slime\">🟢</div>" +
-        "<div class=\"hero-text\">" +
-        "<h1>That Time I Got Reincarnated as a Slime</h1>" +
-        "<p>Satoru Mikami — average 37-year-old salaryman — gets reincarnated as a slime in a fantasy world. " +
-        "Read all 21 light novel volumes. Your progress is saved automatically.</p>" +
-        "</div></div>" +
-        continueHtml +
-        "<div class=\"section-title\">All Volumes</div>" +
-        "<div class=\"volume-grid\">" + gridItems + "</div>";
-
-    // Events
-    homePage.querySelectorAll(".volume-card").forEach(function(card) {
-        card.addEventListener("click", function() {
-            var vol = VOLUMES.find(function(v) { return v.key === card.dataset.volKey; });
-            if (vol) renderVolumePage(vol);
-        });
+    $("sr-settings-btn").addEventListener("click", e => {
+        e.stopPropagation();
+        $("sr-settings-panel").classList.toggle("sr-open");
     });
 
-    var contBanner = document.getElementById("continue-reading-banner");
-    if (contBanner && continueVol) {
-        var _cvi = continueVol;
-        var _cIdx = continueChIdx;
-        contBanner.addEventListener("click", function() {
-            renderVolumePage(_cvi, _cIdx);
-        });
-    }
-}
-
-// ============================================================
-// VOLUME PAGE (Chapter List)
-// ============================================================
-function renderVolumePage(vol, autoChapterIdx) {
-    App.page = "volume";
-    App.currentVolume = vol;
-    App.chapters = vol.chapters;
-    stopScrollSaving();
-    hide("home-page");
-    hide("reader-page");
-    show("volume-page");
-
-    document.getElementById("back-btn").classList.add("visible");
-    document.getElementById("reader-settings-btn").classList.remove("visible");
-    document.getElementById("chapter-title-bar").textContent = vol.label + " — " + vol.title;
-
-    var progress = Progress.get(vol.key);
-    var lastChId = progress ? progress.chapterId : null;
-
-    var chapListHtml = vol.chapters.map(function(ch, idx) {
-        var isLast = lastChId && ch.id === lastChId;
-        var bookmark = isLast ? "<span class=\"ch-bookmark\">📖 In progress</span>" : "";
-        return "<div class=\"chapter-item" + (isLast ? " active" : "") + "\" data-ch-idx=\"" + idx + "\">" +
-            "<div class=\"ch-icon\"></div>" +
-            "<span class=\"ch-title\">" + ch.title + "</span>" +
-            bookmark + "</div>";
-    }).join("");
-
-    var continueBtn = lastChId ?
-        "<button class=\"continue-btn\" id=\"vol-continue-btn\">Continue Reading</button>" : "";
-
-    var volPage = document.getElementById("volume-page");
-    volPage.innerHTML =
-        "<div class=\"volume-detail-header\">" +
-        "<div class=\"volume-detail-cover\">" + vol.emoji + "</div>" +
-        "<div class=\"volume-detail-meta\">" +
-        "<h2>" + vol.label + "</h2>" +
-        "<p>" + vol.title + " · " + vol.chapters.length + " chapters</p>" +
-        (progress ? "<p style=\"font-size:0.82rem;color:#7ee8a2;\">Progress: " + progress.scrollPct + "% through <em>" +
-            (vol.chapters.find(function(c) { return c.id === progress.chapterId; }) || {}).title + "</em></p>" : "") +
-        continueBtn +
-        "</div></div>" +
-        "<div class=\"section-title\">Chapters</div>" +
-        "<div class=\"chapter-list\">" + chapListHtml + "</div>";
-
-    volPage.querySelectorAll(".chapter-item").forEach(function(item) {
-        item.addEventListener("click", function() {
-            var idx = parseInt(item.dataset.chIdx, 10);
-            renderReader(vol, idx);
-        });
-    });
-
-    var cb = document.getElementById("vol-continue-btn");
-    if (cb && lastChId) {
-        var resumeIdx = vol.chapters.findIndex(function(c) { return c.id === lastChId; });
-        if (resumeIdx < 0) resumeIdx = 0;
-        cb.addEventListener("click", function() { renderReader(vol, resumeIdx, progress.scrollPct); });
-    }
-
-    // Auto-open chapter if specified (from "continue reading" banner)
-    if (typeof autoChapterIdx === "number") {
-        var savedScroll = progress ? progress.scrollPct : 0;
-        renderReader(vol, autoChapterIdx, savedScroll);
-    }
-}
-
-// ============================================================
-// READER
-// ============================================================
-async function renderReader(vol, chapterIdx, resumeScrollPct) {
-    App.page = "reader";
-    App.currentVolume = vol;
-    App.currentChapterIdx = chapterIdx;
-    App.chapters = vol.chapters;
-    stopScrollSaving();
-
-    hide("home-page");
-    hide("volume-page");
-    show("reader-page");
-
-    document.getElementById("back-btn").classList.add("visible");
-    document.getElementById("reader-settings-btn").classList.add("visible");
-
-    var chapter = vol.chapters[chapterIdx];
-    var chapterTitleBar = document.getElementById("chapter-title-bar");
-    chapterTitleBar.textContent = vol.label + " · " + chapter.title;
-    document.getElementById("chapter-title-bar").textContent = vol.label + " · " + chapter.title;
-
-    // Populate chapter dropdown
-    var sel = document.getElementById("chapter-select");
-    sel.innerHTML = vol.chapters.map(function(ch, i) {
-        return "<option value=\"" + i + "\"" + (i === chapterIdx ? " selected" : "") + ">" + ch.title + "</option>";
-    }).join("");
-
-    // Nav buttons
-    document.getElementById("prev-ch-btn").disabled = chapterIdx === 0;
-    document.getElementById("next-ch-btn").disabled = chapterIdx === vol.chapters.length - 1;
-
-    // Content
-    var contentDiv = document.getElementById("reader-content");
-    contentDiv.innerHTML = "<div class=\"spinner\"><div class=\"spinner-ring\"></div><p>Loading chapter…</p></div>";
-
-    var url = vol.chapterBase + chapter.path;
-
-    try {
-        var html = await fetchChapterContent(url);
-        contentDiv.innerHTML = html;
-        Settings.apply();
-
-        // Restore scroll
-        var scrollTo = (typeof resumeScrollPct === "number") ? resumeScrollPct :
-            (Progress.get(vol.key) && Progress.get(vol.key).chapterId === chapter.id ? Progress.get(vol.key).scrollPct : 0);
-        restoreScroll(scrollTo);
-
-        // Save progress immediately
-        Progress.set(vol.key, chapter.id, scrollTo || 0);
-
-        // Start auto-saving scroll position
-        startScrollSaving(vol.key, chapter.id);
-
-    } catch (err) {
-        contentDiv.innerHTML =
-            "<div class=\"error-box\">" +
-            "<strong>⚠️ Could not load chapter</strong>" +
-            "<p>Failed to fetch from <code>" + url + "</code>.<br>" + err.message + "</p>" +
-            "<p style=\"margin-top:8px;\">The site may require direct browser access. " +
-            "Try opening <a href=\"" + url + "\" target=\"_blank\" style=\"color:#f0883e;\">" + url + "</a> directly.</p>" +
-            "<button onclick=\"renderReader(App.currentVolume, App.currentChapterIdx)\">Retry</button>" +
-            "</div>";
-    }
-}
-
-// ============================================================
-// EVENT: Settings Panel
-// ============================================================
-document.getElementById("reader-settings-btn").addEventListener("click", function(e) {
-    e.stopPropagation();
-    document.getElementById("settings-panel").classList.toggle("open");
-});
-
-document.addEventListener("click", function(e) {
-    var panel = document.getElementById("settings-panel");
-    if (panel.classList.contains("open") && !panel.contains(e.target) && e.target.id !== "reader-settings-btn") {
-        panel.classList.remove("open");
-    }
-});
-
-// Theme buttons
-document.querySelectorAll(".theme-btn").forEach(function(btn) {
-    btn.addEventListener("click", function() {
-        Settings._data.theme = btn.dataset.theme;
-        Settings.save();
-        Settings.apply();
-    });
-});
-
-// Sliders
-function bindSlider(sliderId, labelId, key, transform) {
-    var el = document.getElementById(sliderId);
-    if (!el) return;
-    el.addEventListener("input", function() {
-        var val = transform ? transform(el.value) : el.value;
-        Settings._data[key] = val;
-        document.getElementById(labelId).textContent = val;
-        Settings.save();
-        Settings.apply();
-    });
-}
-
-bindSlider("font-size-slider",   "font-size-label",   "fontSize",   function(v){ return parseInt(v); });
-bindSlider("line-height-slider", "line-height-label", "lineHeight", function(v){ return parseFloat(v); });
-bindSlider("max-width-slider",   "max-width-label",   "maxWidth",   function(v){ return parseInt(v); });
-
-var ffSel = document.getElementById("font-family-select");
-if (ffSel) {
-    ffSel.addEventListener("change", function() {
-        Settings._data.fontFamily = ffSel.value;
-        Settings.save();
-        Settings.apply();
-    });
-}
-
-// ============================================================
-// EVENT: Reader Navigation
-// ============================================================
-document.getElementById("prev-ch-btn").addEventListener("click", function() {
-    if (App.currentChapterIdx > 0) {
-        Progress.set(App.currentVolume.key, App.chapters[App.currentChapterIdx].id, getScrollPct());
-        renderReader(App.currentVolume, App.currentChapterIdx - 1);
-    }
-});
-
-document.getElementById("next-ch-btn").addEventListener("click", function() {
-    if (App.currentChapterIdx < App.chapters.length - 1) {
-        Progress.set(App.currentVolume.key, App.chapters[App.currentChapterIdx].id, getScrollPct());
-        renderReader(App.currentVolume, App.currentChapterIdx + 1);
-    }
-});
-
-document.getElementById("chapter-select").addEventListener("change", function(e) {
-    var idx = parseInt(e.target.value, 10);
-    if (idx !== App.currentChapterIdx) {
-        Progress.set(App.currentVolume.key, App.chapters[App.currentChapterIdx].id, getScrollPct());
-        renderReader(App.currentVolume, idx);
-    }
-});
-
-// ============================================================
-// EVENT: Back Button
-// ============================================================
-document.getElementById("back-btn").addEventListener("click", function() {
-    if (App.page === "reader") {
-        Progress.set(App.currentVolume.key, App.chapters[App.currentChapterIdx].id, getScrollPct());
-        renderVolumePage(App.currentVolume);
-    } else if (App.page === "volume") {
-        renderHome();
-    }
-});
-
-// ============================================================
-// WEBVIEW CHANNEL: receive progress from plugin $storage
-// ============================================================
-if (window.webview) {
-    window.webview.on("state", function(state) {
-        if (state && state.savedProgress && state.volumeKey) {
-            Progress._cache[state.volumeKey] = state.savedProgress;
+    document.addEventListener("click", e => {
+        const panel = $("sr-settings-panel");
+        if (panel && panel.classList.contains("sr-open") && !panel.contains(e.target) && e.target.id !== "sr-settings-btn") {
+            panel.classList.remove("sr-open");
         }
     });
-}
 
-// ============================================================
-// INIT
-// ============================================================
-Settings.load();
-renderHome();
+    // ESC to close
+    function onEsc(e) {
+        if (e.key === "Escape") { e.preventDefault(); cleanup(); }
+    }
+    window.addEventListener("keydown", onEsc);
+
+    // =========================================================
+    // READER NAV EVENTS
+    // =========================================================
+    $("sr-prev").addEventListener("click", () => {
+        if (App.chIdx > 0) {
+            Progress.set(App.vol.key, App.vol.chapters[App.chIdx].id, getScrollPct());
+            renderReader(App.vol, App.chIdx - 1);
+        }
+    });
+    $("sr-next").addEventListener("click", () => {
+        if (App.chIdx < App.vol.chapters.length - 1) {
+            Progress.set(App.vol.key, App.vol.chapters[App.chIdx].id, getScrollPct());
+            renderReader(App.vol, App.chIdx + 1);
+        }
+    });
+    $("sr-ch-select").addEventListener("change", e => {
+        const i = parseInt(e.target.value);
+        if (i !== App.chIdx) {
+            Progress.set(App.vol.key, App.vol.chapters[App.chIdx].id, getScrollPct());
+            renderReader(App.vol, i);
+        }
+    });
+
+    // =========================================================
+    // SETTINGS EVENTS
+    // =========================================================
+    document.querySelectorAll(".sr-theme-btn").forEach(btn => {
+        btn.addEventListener("click", () => {
+            Settings.get().theme = btn.dataset.theme;
+            Settings.save(); Settings.apply();
+        });
+    });
+    function bindSlider(sliderId, labelId, key, parse) {
+        const el = $(sliderId); if (!el) return;
+        el.addEventListener("input", () => {
+            Settings.get()[key] = parse(el.value);
+            $(labelId).textContent = Settings.get()[key];
+            Settings.save(); Settings.apply();
+        });
+    }
+    bindSlider("sr-fs-slider","sr-fs-label","fontSize",v=>parseInt(v));
+    bindSlider("sr-lh-slider","sr-lh-label","lineHeight",v=>parseFloat(v));
+    bindSlider("sr-mw-slider","sr-mw-label","maxWidth",v=>parseInt(v));
+    const ffs = $("sr-ff-select");
+    if (ffs) ffs.addEventListener("change", () => { Settings.get().fontFamily = ffs.value; Settings.save(); Settings.apply(); });
+
+    // =========================================================
+    // CLEANUP
+    // =========================================================
+    function cleanup() {
+        stopScrollSave();
+        window.removeEventListener("keydown", onEsc);
+        $("sr-backdrop")?.remove();
+        $("sr-style")?.remove();
+        document.querySelector(\`script[data-sr-id="${scriptId}"]\`)?.remove();
+    }
+
+    // =========================================================
+    // BOOT
+    // =========================================================
+    Settings.apply();
+    renderHome();
 
 })();
-</script>
-</body>
-</html>`);
+`;
+        }
 
-        // Tray icon as an alternative entry point
+        // ------------------------------------------------------------------
+        // TRAY: clicking the icon injects the script into Seanime's DOM
+        // ------------------------------------------------------------------
         const tray = ctx.newTray({
             tooltipText: "Slime Reader",
-            iconUrl: "data:image/svg+xml," + encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#7ee8a2" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>`),
+            iconUrl: "data:image/svg+xml," + encodeURIComponent(
+                `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#7ee8a2" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>`
+            ),
             withContent: false,
         });
 
-        tray.onClick(() => {
-            // Navigate to the webview screen
-            ctx.screen.navigateTo(panel.getScreenPath());
+        tray.onClick(async () => {
+            try {
+                // Don't open twice
+                if (await ctx.dom.queryOne("#sr-backdrop")) return;
+
+                const body = await ctx.dom.queryOne("body");
+                if (!body) return;
+
+                const scriptId = "sr-script-" + Date.now();
+                const script = await ctx.dom.createElement("script");
+                script.setAttribute("data-sr-id", scriptId);
+                script.setText(getInjectedScript(scriptId));
+                body.append(script);
+            } catch (err) {
+                console.error("[SlimeReader] Tray error:", err);
+            }
         });
     });
 }
