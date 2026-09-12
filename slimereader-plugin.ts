@@ -4,771 +4,551 @@
 /// <reference path="./core.d.ts" />
 
 // =============================================================================
-// Slime Reader – Seanime Plugin
-// Injects a full-screen reader UI into Seanime's DOM via a tray icon click.
-// Progress is saved to localStorage (survives tab reloads) and also synced
-// to plugin $storage (survives app restarts) via a periodic heartbeat.
+// Slime Reader – Seanime Plugin  v3.0
+// Reads pre-compiled volume HTMLs from https://tensurafan.github.io/ln/vX.html
+// All volumes are single HTML files with chapter anchor IDs inside them.
+// Progress is saved to localStorage (scroll % per volume).
 // =============================================================================
 
 function init() {
     $ui.register((ctx) => {
 
-        // ------------------------------------------------------------------
-        // Generate the self-contained injected script string.
-        // Everything inside runs in the browser context (window / DOM).
-        // ------------------------------------------------------------------
-        function getInjectedScript(scriptId: string): string {
-            return `
-(async function() {
-    // Exit early if already open
+        function getInjectedScript(): string {
+            return `(async function() {
     if (document.getElementById("sr-backdrop")) return;
 
     // =========================================================
-    // VOLUME CATALOGUE
-    // URL structure: https://tensurafan.github.io/vol1/ch1/ etc.
+    // VOLUME CATALOGUE  (from ln/volumes.json, progress:100 only)
+    // URL: https://tensurafan.github.io/ln/vX.html
     // =========================================================
     const BASE = "https://tensurafan.github.io";
-
     const VOLUMES = [
-        { key:"vol1",  label:"Volume 1",  title:"Birth of a Slime",          emoji:"🟢",
-          chapters:[
-            {id:"prologue",title:"Prologue",          path:"/vol1/prologue/"},
-            {id:"ch1",     title:"Chapter 1",          path:"/vol1/ch1/"},
-            {id:"ch2",     title:"Chapter 2",          path:"/vol1/ch2/"},
-            {id:"ch3",     title:"Chapter 3",          path:"/vol1/ch3/"},
-            {id:"ch4",     title:"Chapter 4",          path:"/vol1/ch4/"},
-            {id:"ch5",     title:"Chapter 5",          path:"/vol1/ch5/"},
-            {id:"ch6",     title:"Chapter 6",          path:"/vol1/ch6/"},
-            {id:"ch7",     title:"Chapter 7",          path:"/vol1/ch7/"},
-            {id:"epilogue",title:"Epilogue",           path:"/vol1/epilogue/"},
-          ]},
-        { key:"vol2",  label:"Volume 2",  title:"The Dwarven Kingdom Arc",    emoji:"⚒️",
-          chapters:[
-            {id:"prologue",title:"Prologue",path:"/vol2/prologue/"},
-            {id:"ch1",title:"Chapter 1",path:"/vol2/ch1/"},
-            {id:"ch2",title:"Chapter 2",path:"/vol2/ch2/"},
-            {id:"ch3",title:"Chapter 3",path:"/vol2/ch3/"},
-            {id:"ch4",title:"Chapter 4",path:"/vol2/ch4/"},
-            {id:"ch5",title:"Chapter 5",path:"/vol2/ch5/"},
-            {id:"ch6",title:"Chapter 6",path:"/vol2/ch6/"},
-            {id:"epilogue",title:"Epilogue",path:"/vol2/epilogue/"},
-          ]},
-        { key:"vol3",  label:"Volume 3",  title:"The Orc Disaster Arc",       emoji:"🐗",
-          chapters:[
-            {id:"prologue",title:"Prologue",path:"/vol3/prologue/"},
-            {id:"ch1",title:"Chapter 1",path:"/vol3/ch1/"},
-            {id:"ch2",title:"Chapter 2",path:"/vol3/ch2/"},
-            {id:"ch3",title:"Chapter 3",path:"/vol3/ch3/"},
-            {id:"ch4",title:"Chapter 4",path:"/vol3/ch4/"},
-            {id:"ch5",title:"Chapter 5",path:"/vol3/ch5/"},
-            {id:"ch6",title:"Chapter 6",path:"/vol3/ch6/"},
-            {id:"epilogue",title:"Epilogue",path:"/vol3/epilogue/"},
-          ]},
-        { key:"vol4",  label:"Volume 4",  title:"Tempest Founding Arc",       emoji:"🏰",
-          chapters:[
-            {id:"prologue",title:"Prologue",path:"/vol4/prologue/"},
-            {id:"ch1",title:"Chapter 1",path:"/vol4/ch1/"},
-            {id:"ch2",title:"Chapter 2",path:"/vol4/ch2/"},
-            {id:"ch3",title:"Chapter 3",path:"/vol4/ch3/"},
-            {id:"ch4",title:"Chapter 4",path:"/vol4/ch4/"},
-            {id:"ch5",title:"Chapter 5",path:"/vol4/ch5/"},
-            {id:"epilogue",title:"Epilogue",path:"/vol4/epilogue/"},
-          ]},
-        { key:"vol5",  label:"Volume 5",  title:"Kingdom of Farmus",          emoji:"⚔️",
-          chapters:[
-            {id:"prologue",title:"Prologue",path:"/vol5/prologue/"},
-            {id:"ch1",title:"Chapter 1",path:"/vol5/ch1/"},
-            {id:"ch2",title:"Chapter 2",path:"/vol5/ch2/"},
-            {id:"ch3",title:"Chapter 3",path:"/vol5/ch3/"},
-            {id:"ch4",title:"Chapter 4",path:"/vol5/ch4/"},
-            {id:"ch5",title:"Chapter 5",path:"/vol5/ch5/"},
-            {id:"epilogue",title:"Epilogue",path:"/vol5/epilogue/"},
-          ]},
-        { key:"vol6",  label:"Volume 6",  title:"Walpurgis",                  emoji:"🌙",
-          chapters:[
-            {id:"prologue",title:"Prologue",path:"/vol6/prologue/"},
-            {id:"ch1",title:"Chapter 1",path:"/vol6/ch1/"},
-            {id:"ch2",title:"Chapter 2",path:"/vol6/ch2/"},
-            {id:"ch3",title:"Chapter 3",path:"/vol6/ch3/"},
-            {id:"ch4",title:"Chapter 4",path:"/vol6/ch4/"},
-            {id:"epilogue",title:"Epilogue",path:"/vol6/epilogue/"},
-          ]},
-        { key:"vol7",  label:"Volume 7",  title:"Eurazania Arc",              emoji:"🐾",
-          chapters:[
-            {id:"prologue",title:"Prologue",path:"/vol7/prologue/"},
-            {id:"ch1",title:"Chapter 1",path:"/vol7/ch1/"},
-            {id:"ch2",title:"Chapter 2",path:"/vol7/ch2/"},
-            {id:"ch3",title:"Chapter 3",path:"/vol7/ch3/"},
-            {id:"ch4",title:"Chapter 4",path:"/vol7/ch4/"},
-            {id:"epilogue",title:"Epilogue",path:"/vol7/epilogue/"},
-          ]},
-        { key:"vol8",  label:"Volume 8",  title:"Labyrinth Arc",              emoji:"🌀",
-          chapters:[
-            {id:"prologue",title:"Prologue",path:"/vol8/prologue/"},
-            {id:"ch1",title:"Chapter 1",path:"/vol8/ch1/"},
-            {id:"ch2",title:"Chapter 2",path:"/vol8/ch2/"},
-            {id:"ch3",title:"Chapter 3",path:"/vol8/ch3/"},
-            {id:"ch4",title:"Chapter 4",path:"/vol8/ch4/"},
-            {id:"epilogue",title:"Epilogue",path:"/vol8/epilogue/"},
-          ]},
-        { key:"vol9",  label:"Volume 9",  title:"Eurazania Restored",         emoji:"🌿",
-          chapters:[
-            {id:"prologue",title:"Prologue",path:"/vol9/prologue/"},
-            {id:"ch1",title:"Chapter 1",path:"/vol9/ch1/"},
-            {id:"ch2",title:"Chapter 2",path:"/vol9/ch2/"},
-            {id:"ch3",title:"Chapter 3",path:"/vol9/ch3/"},
-            {id:"ch4",title:"Chapter 4",path:"/vol9/ch4/"},
-            {id:"epilogue",title:"Epilogue",path:"/vol9/epilogue/"},
-          ]},
-        { key:"vol10", label:"Volume 10", title:"Tenma Great War",            emoji:"💥",
-          chapters:[
-            {id:"prologue",title:"Prologue",path:"/vol10/prologue/"},
-            {id:"ch1",title:"Chapter 1",path:"/vol10/ch1/"},
-            {id:"ch2",title:"Chapter 2",path:"/vol10/ch2/"},
-            {id:"ch3",title:"Chapter 3",path:"/vol10/ch3/"},
-            {id:"ch4",title:"Chapter 4",path:"/vol10/ch4/"},
-            {id:"ch5",title:"Chapter 5",path:"/vol10/ch5/"},
-            {id:"epilogue",title:"Epilogue",path:"/vol10/epilogue/"},
-          ]},
-        { key:"vol11", label:"Volume 11", title:"King of Monsters",           emoji:"👑",
-          chapters:[
-            {id:"prologue",title:"Prologue",path:"/vol11/prologue/"},
-            {id:"ch1",title:"Chapter 1",path:"/vol11/ch1/"},
-            {id:"ch2",title:"Chapter 2",path:"/vol11/ch2/"},
-            {id:"ch3",title:"Chapter 3",path:"/vol11/ch3/"},
-            {id:"ch4",title:"Chapter 4",path:"/vol11/ch4/"},
-            {id:"epilogue",title:"Epilogue",path:"/vol11/epilogue/"},
-          ]},
-        { key:"vol12", label:"Volume 12", title:"Sealed Foes",                emoji:"🔒",
-          chapters:[
-            {id:"prologue",title:"Prologue",path:"/vol12/prologue/"},
-            {id:"ch1",title:"Chapter 1",path:"/vol12/ch1/"},
-            {id:"ch2",title:"Chapter 2",path:"/vol12/ch2/"},
-            {id:"ch3",title:"Chapter 3",path:"/vol12/ch3/"},
-            {id:"ch4",title:"Chapter 4",path:"/vol12/ch4/"},
-            {id:"epilogue",title:"Epilogue",path:"/vol12/epilogue/"},
-          ]},
-        { key:"vol13", label:"Volume 13", title:"Road to the Empire",         emoji:"🗺️",
-          chapters:[
-            {id:"prologue",title:"Prologue",path:"/vol13/prologue/"},
-            {id:"ch1",title:"Chapter 1",path:"/vol13/ch1/"},
-            {id:"ch2",title:"Chapter 2",path:"/vol13/ch2/"},
-            {id:"ch3",title:"Chapter 3",path:"/vol13/ch3/"},
-            {id:"epilogue",title:"Epilogue",path:"/vol13/epilogue/"},
-          ]},
-        { key:"vol14", label:"Volume 14", title:"Invaders",                   emoji:"🌪️",
-          chapters:[
-            {id:"prologue",title:"Prologue",path:"/vol14/prologue/"},
-            {id:"ch1",title:"Chapter 1",path:"/vol14/ch1/"},
-            {id:"ch2",title:"Chapter 2",path:"/vol14/ch2/"},
-            {id:"ch3",title:"Chapter 3",path:"/vol14/ch3/"},
-            {id:"ch4",title:"Chapter 4",path:"/vol14/ch4/"},
-            {id:"epilogue",title:"Epilogue",path:"/vol14/epilogue/"},
-          ]},
-        { key:"vol15", label:"Volume 15", title:"The Empire's Fall",          emoji:"🏚️",
-          chapters:[
-            {id:"prologue",title:"Prologue",path:"/vol15/prologue/"},
-            {id:"ch1",title:"Chapter 1",path:"/vol15/ch1/"},
-            {id:"ch2",title:"Chapter 2",path:"/vol15/ch2/"},
-            {id:"ch3",title:"Chapter 3",path:"/vol15/ch3/"},
-            {id:"epilogue",title:"Epilogue",path:"/vol15/epilogue/"},
-          ]},
-        { key:"vol16", label:"Volume 16", title:"Beginning of the End",       emoji:"🌌",
-          chapters:[
-            {id:"prologue",title:"Prologue",path:"/vol16/prologue/"},
-            {id:"ch1",title:"Chapter 1",path:"/vol16/ch1/"},
-            {id:"ch2",title:"Chapter 2",path:"/vol16/ch2/"},
-            {id:"ch3",title:"Chapter 3",path:"/vol16/ch3/"},
-            {id:"epilogue",title:"Epilogue",path:"/vol16/epilogue/"},
-          ]},
-        { key:"vol17", label:"Volume 17", title:"Dragon vs Demon",            emoji:"🐉",
-          chapters:[
-            {id:"prologue",title:"Prologue",path:"/vol17/prologue/"},
-            {id:"ch1",title:"Chapter 1",path:"/vol17/ch1/"},
-            {id:"ch2",title:"Chapter 2",path:"/vol17/ch2/"},
-            {id:"ch3",title:"Chapter 3",path:"/vol17/ch3/"},
-            {id:"epilogue",title:"Epilogue",path:"/vol17/epilogue/"},
-          ]},
-        { key:"vol18", label:"Volume 18", title:"King of Tempest",            emoji:"⚡",
-          chapters:[
-            {id:"prologue",title:"Prologue",path:"/vol18/prologue/"},
-            {id:"ch1",title:"Chapter 1",path:"/vol18/ch1/"},
-            {id:"ch2",title:"Chapter 2",path:"/vol18/ch2/"},
-            {id:"ch3",title:"Chapter 3",path:"/vol18/ch3/"},
-            {id:"epilogue",title:"Epilogue",path:"/vol18/epilogue/"},
-          ]},
-        { key:"vol19", label:"Volume 19", title:"The True Dragon",            emoji:"🌟",
-          chapters:[
-            {id:"prologue",title:"Prologue",path:"/vol19/prologue/"},
-            {id:"ch1",title:"Chapter 1",path:"/vol19/ch1/"},
-            {id:"ch2",title:"Chapter 2",path:"/vol19/ch2/"},
-            {id:"epilogue",title:"Epilogue",path:"/vol19/epilogue/"},
-          ]},
-        { key:"vol20", label:"Volume 20", title:"Beyond the Stars",           emoji:"✨",
-          chapters:[
-            {id:"prologue",title:"Prologue",path:"/vol20/prologue/"},
-            {id:"ch1",title:"Chapter 1",path:"/vol20/ch1/"},
-            {id:"ch2",title:"Chapter 2",path:"/vol20/ch2/"},
-            {id:"epilogue",title:"Epilogue",path:"/vol20/epilogue/"},
-          ]},
-        { key:"vol21", label:"Volume 21", title:"Finale",                     emoji:"🏁",
-          chapters:[
-            {id:"prologue",title:"Prologue",path:"/vol21/prologue/"},
-            {id:"ch1",title:"Chapter 1",path:"/vol21/ch1/"},
-            {id:"ch2",title:"Chapter 2",path:"/vol21/ch2/"},
-            {id:"ch3",title:"Chapter 3 – Final Chapter",path:"/vol21/ch3/"},
-            {id:"epilogue",title:"Epilogue",path:"/vol21/epilogue/"},
-          ]},
+        { id:"v6",    name:"Volume 6",                  path:"/ln/v6.html",    emoji:"🟢", chapters:[{id:"prologue",label:"Prologue"},{id:"chapter-1",label:"Chapter 1"},{id:"chapter-2",label:"Chapter 2"},{id:"chapter-3",label:"Chapter 3"},{id:"interlude",label:"Interlude"},{id:"chapter-4",label:"Chapter 4"},{id:"chapter-5",label:"Chapter 5"},{id:"chapter-6",label:"Chapter 6"},{id:"epilogue",label:"Epilogue"},{id:"afterword",label:"Afterword"}]},
+        { id:"v7",    name:"Volume 7",                  path:"/ln/v7.html",    emoji:"⚔️", chapters:[{id:"prologue",label:"Prologue"},{id:"chapter-1",label:"Chapter 1"},{id:"chapter-2",label:"Chapter 2"},{id:"chapter-3",label:"Chapter 3"},{id:"chapter-4",label:"Chapter 4"},{id:"chapter-5",label:"Chapter 5"},{id:"chapter-6",label:"Chapter 6"},{id:"chapter-7",label:"Chapter 7"},{id:"chapter-8",label:"Chapter 8"},{id:"epilogue",label:"Epilogue"},{id:"afterword",label:"Afterword"}]},
+        { id:"v8",    name:"Volume 8",                  path:"/ln/v8.html",    emoji:"🌀", chapters:[{id:"prologue",label:"Prologue"},{id:"chapter-1",label:"Chapter 1"},{id:"chapter-2",label:"Chapter 2"},{id:"chapter-3",label:"Chapter 3"},{id:"chapter-4",label:"Chapter 4"},{id:"chapter-5",label:"Chapter 5"},{id:"chapter-6",label:"Chapter 6"},{id:"chapter-7",label:"Chapter 7"},{id:"epilogue",label:"Epilogue"},{id:"afterword",label:"Afterword"}]},
+        { id:"v8_5",  name:"Volume 8.5 Side Stories",   path:"/ln/v8.5.html",  emoji:"📖", chapters:[{id:"prologue",label:"Prologue"},{id:"chapter-1",label:"Chapter 1"},{id:"chapter-2",label:"Chapter 2"},{id:"chapter-3",label:"Chapter 3"},{id:"chapter-4",label:"Chapter 4"},{id:"chapter-5",label:"Chapter 5"},{id:"epilogue",label:"Epilogue"}]},
+        { id:"v9",    name:"Volume 9",                  path:"/ln/v9.html",    emoji:"🌿", chapters:[{id:"prologue",label:"Prologue"},{id:"chapter-1",label:"Chapter 1"},{id:"chapter-2",label:"Chapter 2"},{id:"chapter-3",label:"Chapter 3"},{id:"chapter-4",label:"Chapter 4"},{id:"chapter-5",label:"Chapter 5"},{id:"epilogue",label:"Epilogue"},{id:"afterword",label:"Afterword"}]},
+        { id:"v10",   name:"Volume 10",                 path:"/ln/v10.html",   emoji:"💥", chapters:[{id:"prologue",label:"Prologue"},{id:"chapter-1",label:"Chapter 1"},{id:"chapter-2",label:"Chapter 2"},{id:"chapter-3",label:"Chapter 3"},{id:"chapter-4",label:"Chapter 4"},{id:"chapter-5",label:"Chapter 5"},{id:"chapter-6",label:"Chapter 6"},{id:"chapter-7",label:"Chapter 7"},{id:"chapter-8",label:"Chapter 8"},{id:"epilogue",label:"Epilogue"},{id:"afterword",label:"Afterword"}]},
+        { id:"v11",   name:"Volume 11",                 path:"/ln/v11.html",   emoji:"👑", chapters:[{id:"prologue",label:"Prologue"},{id:"chapter-1",label:"Chapter 1"},{id:"chapter-2",label:"Chapter 2"},{id:"chapter-3",label:"Chapter 3"},{id:"chapter-4",label:"Chapter 4"},{id:"chapter-5",label:"Chapter 5"},{id:"epilogue",label:"Epilogue"},{id:"afterword",label:"Afterword"}]},
+        { id:"v12",   name:"Volume 12",                 path:"/ln/v12.html",   emoji:"🔒", chapters:[{id:"prologue",label:"Prologue"},{id:"chapter-1",label:"Chapter 1"},{id:"chapter-2",label:"Chapter 2"},{id:"chapter-3",label:"Chapter 3"},{id:"chapter-4",label:"Chapter 4"},{id:"chapter-5",label:"Chapter 5"},{id:"epilogue",label:"Epilogue"},{id:"afterword",label:"Afterword"}]},
+        { id:"v13",   name:"Volume 13",                 path:"/ln/v13.html",   emoji:"🗺️", chapters:[{id:"prologue",label:"Prologue"},{id:"chapter-1",label:"Chapter 1"},{id:"chapter-2",label:"Chapter 2"},{id:"chapter-3",label:"Chapter 3"},{id:"chapter-4",label:"Chapter 4"},{id:"chapter-5",label:"Chapter 5"},{id:"chapter-6",label:"Chapter 6"},{id:"epilogue",label:"Epilogue"},{id:"afterword",label:"Afterword"}]},
+        { id:"v13_5", name:"Volume 13.5 Side Stories",  path:"/ln/v13.5.html", emoji:"📖", chapters:[{id:"prologue",label:"Prologue"},{id:"chapter-1",label:"Chapter 1"},{id:"chapter-2",label:"Chapter 2"},{id:"chapter-3",label:"Chapter 3"},{id:"epilogue",label:"Epilogue"}]},
+        { id:"v14",   name:"Volume 14",                 path:"/ln/v14.html",   emoji:"🌪️", chapters:[{id:"prologue",label:"Prologue"},{id:"chapter-1",label:"Chapter 1"},{id:"chapter-2",label:"Chapter 2"},{id:"chapter-3",label:"Chapter 3"},{id:"chapter-4",label:"Chapter 4"},{id:"chapter-5",label:"Chapter 5"},{id:"epilogue",label:"Epilogue"},{id:"afterword",label:"Afterword"}]},
+        { id:"v15",   name:"Volume 15",                 path:"/ln/v15.html",   emoji:"🏚️", chapters:[{id:"prologue",label:"Prologue"},{id:"chapter-1",label:"Chapter 1"},{id:"chapter-2",label:"Chapter 2"},{id:"chapter-3",label:"Chapter 3"},{id:"chapter-4",label:"Chapter 4"},{id:"epilogue",label:"Epilogue"},{id:"afterword",label:"Afterword"}]},
+        { id:"v16",   name:"Volume 16 (Edited MTL)",    path:"/ln/v16.html",   emoji:"🌌", chapters:[{id:"prologue",label:"Prologue"},{id:"chapter-1",label:"Chapter 1"},{id:"chapter-2",label:"Chapter 2"},{id:"chapter-3",label:"Chapter 3"},{id:"chapter-4",label:"Chapter 4"},{id:"epilogue",label:"Epilogue"}]},
+        { id:"v17",   name:"Volume 17 (Edited MTL)",    path:"/ln/v17.html",   emoji:"🐉", chapters:[{id:"prologue",label:"Prologue"},{id:"chapter-1",label:"Chapter 1"},{id:"chapter-2",label:"Chapter 2"},{id:"chapter-3",label:"Chapter 3"},{id:"chapter-4",label:"Chapter 4"},{id:"epilogue",label:"Epilogue"}]},
+        { id:"v18",   name:"Volume 18 (Edited MTL)",    path:"/ln/v18.html",   emoji:"⚡", chapters:[{id:"prologue",label:"Prologue"},{id:"chapter-1",label:"Chapter 1"},{id:"chapter-2",label:"Chapter 2"},{id:"chapter-3",label:"Chapter 3"},{id:"chapter-4",label:"Chapter 4"},{id:"epilogue",label:"Epilogue"}]},
+        { id:"v19",   name:"Volume 19 (Edited MTL)",    path:"/ln/v19.html",   emoji:"🌟", chapters:[{id:"prologue",label:"Prologue"},{id:"chapter-1",label:"Chapter 1"},{id:"chapter-2",label:"Chapter 2"},{id:"chapter-3",label:"Chapter 3"},{id:"epilogue",label:"Epilogue"}]},
+        { id:"v20",   name:"Volume 20 (Edited MTL)",    path:"/ln/v20.html",   emoji:"✨", chapters:[{id:"prologue",label:"Prologue"},{id:"chapter-1",label:"Chapter 1"},{id:"chapter-2",label:"Chapter 2"},{id:"chapter-3",label:"Chapter 3"},{id:"epilogue",label:"Epilogue"}]},
+        { id:"b1",    name:"Special Booklets 1–4",      path:"/ln/b1.html",    emoji:"📚", chapters:[{id:"booklet-1",label:"Booklet 1"},{id:"booklet-2",label:"Booklet 2"},{id:"booklet-3",label:"Booklet 3"},{id:"booklet-4",label:"Booklet 4"}]},
+        { id:"b5",    name:"Special Booklets 5–8",      path:"/ln/b5.html",    emoji:"📚", chapters:[{id:"booklet-5",label:"Booklet 5"},{id:"booklet-6",label:"Booklet 6"},{id:"booklet-7",label:"Booklet 7"},{id:"booklet-8",label:"Booklet 8"}]},
     ];
 
     // =========================================================
-    // PROGRESS  (localStorage)
-    // Keys: sr_progress_vol1  →  JSON {chapterId, scrollPct}
+    // VOLUME CACHE  (fetched HTML stored here, keyed by vol id)
     // =========================================================
-    const Progress = {
-        key: (vk) => "sr_progress_" + vk,
-        get: (vk) => {
-            try { return JSON.parse(localStorage.getItem(Progress.key(vk))) || null; }
-            catch(_) { return null; }
-        },
-        set: (vk, chId, pct) => {
-            localStorage.setItem(Progress.key(vk), JSON.stringify({chapterId:chId, scrollPct:pct}));
-        }
+    const _cache = {};
+
+    // =========================================================
+    // PROGRESS
+    // =========================================================
+    const Prog = {
+        key: v => "sr3_prog_" + v,
+        get: v => { try { return JSON.parse(localStorage.getItem(Prog.key(v))) || null; } catch(_){return null;} },
+        set: (v, scrollPct) => { localStorage.setItem(Prog.key(v), JSON.stringify({scrollPct})); }
     };
 
     // =========================================================
-    // READER SETTINGS  (localStorage)
+    // SETTINGS
     // =========================================================
-    const DEFAULT_SETTINGS = { theme:"dark", fontSize:18, lineHeight:1.85, fontFamily:"Georgia, serif", maxWidth:760 };
-    const Settings = {
-        _d: null,
-        get: () => {
-            if (Settings._d) return Settings._d;
-            try { Settings._d = Object.assign({}, DEFAULT_SETTINGS, JSON.parse(localStorage.getItem("sr_settings"))); }
-            catch(_) { Settings._d = Object.assign({}, DEFAULT_SETTINGS); }
-            return Settings._d;
-        },
-        save: () => { try { localStorage.setItem("sr_settings", JSON.stringify(Settings._d)); } catch(_) {} },
-        apply: () => {
-            const s = Settings.get();
-            const THEMES = { dark:{bg:"#0d1117",txt:"#e2e8f0",wrap:"#0d1117"}, sepia:{bg:"#f4ecd8",txt:"#5b4636",wrap:"#f4ecd8"}, light:{bg:"#f5f5f5",txt:"#1a1a1a",wrap:"#f5f5f5"} };
-            const t = THEMES[s.theme] || THEMES.dark;
-            const rc = document.getElementById("sr-content");
-            const rw = document.getElementById("sr-content-wrap");
-            if (rc) { rc.style.fontSize = s.fontSize+"px"; rc.style.lineHeight = s.lineHeight; rc.style.fontFamily = s.fontFamily; rc.style.maxWidth = s.maxWidth+"px"; rc.style.color = t.txt; }
-            if (rw) rw.style.background = t.wrap;
-            document.querySelectorAll(".sr-theme-btn").forEach(b => b.classList.toggle("sr-active", b.dataset.theme === s.theme));
-            const fsl = document.getElementById("sr-fs-label"); if (fsl) fsl.textContent = s.fontSize;
-            const lhl = document.getElementById("sr-lh-label"); if (lhl) lhl.textContent = s.lineHeight;
-            const mwl = document.getElementById("sr-mw-label"); if (mwl) mwl.textContent = s.maxWidth;
-            const fss = document.getElementById("sr-fs-slider"); if (fss) fss.value = s.fontSize;
-            const lhs = document.getElementById("sr-lh-slider"); if (lhs) lhs.value = s.lineHeight;
-            const mws = document.getElementById("sr-mw-slider"); if (mws) mws.value = s.maxWidth;
-            const ffs = document.getElementById("sr-ff-select"); if (ffs) ffs.value = s.fontFamily;
+    const DEF = { theme:"dark", fontSize:18, lineHeight:1.85, fontFamily:"Georgia, serif", maxWidth:760 };
+    const S = {
+        d: null,
+        get() { if (!S.d) { try { S.d = Object.assign({}, DEF, JSON.parse(localStorage.getItem("sr3_settings"))); } catch(_){ S.d = {...DEF}; } } return S.d; },
+        save() { try { localStorage.setItem("sr3_settings", JSON.stringify(S.d)); } catch(_){} },
+        apply() {
+            const s = S.get();
+            const T = { dark:{bg:"#0d1117",txt:"#e2e8f0"}, sepia:{bg:"#f4ecd8",txt:"#5b4636"}, light:{bg:"#f5f5f5",txt:"#1a1a1a"} };
+            const t = T[s.theme]||T.dark;
+            const rc = $("sr-content"), rw = $("sr-cw");
+            if (rc) { rc.style.fontSize=s.fontSize+"px"; rc.style.lineHeight=s.lineHeight; rc.style.fontFamily=s.fontFamily; rc.style.maxWidth=s.maxWidth+"px"; rc.style.color=t.txt; }
+            if (rw) rw.style.background = t.bg;
+            document.querySelectorAll(".sr-tbtn").forEach(b=>b.classList.toggle("sr-ta",b.dataset.theme===s.theme));
+            _sl("sr-fsl","sr-fsl","fontSize","sr-fs"); _sl("sr-lhl","sr-lhl","lineHeight","sr-lh"); _sl("sr-mwl","sr-mwl","maxWidth","sr-mw");
+            const ff=$("sr-ffs"); if(ff) ff.value=s.fontFamily;
         }
     };
+    function _sl(lblId, inputId, key, sliderId) {
+        const l=$("sr-"+lblId.replace("sr-","")), sl=$("sr-"+sliderId.replace("sr-",""));
+        if(l) l.textContent = S.get()[key];
+        if(sl) sl.value = S.get()[key];
+    }
+
+    // =========================================================
+    // CLEAN TEMPLATE STRINGS from the site's own template system
+    // Pattern: {:expr:}|fallback| → show fallback text
+    //           {expr}|fallback|  → show fallback text
+    // =========================================================
+    function cleanHtml(html) {
+        // Strip template expressions, keep fallback (the part after the last | before closing |)
+        // Pattern: {:...:|fallback| or {:...:}|fallback|
+        html = html.replace(/\{:.*?:\}\|([^|]*)\|/g, "$1");
+        html = html.replace(/\{[^}]*\}\|([^|]*)\|/g, "$1");
+        // Remove any leftover { } template bits
+        html = html.replace(/\{:[^}]*:\}/g, "");
+        // Fix image src: /ln/sources/... → absolute URL
+        html = html.replace(/src="\/ln\//g, 'src="' + BASE + '/ln/');
+        // Fix href anchors on hlinks to just be hash-only (they already are #xxx)
+        return html;
+    }
+
+    // =========================================================
+    // FETCH VOLUME (with cache)
+    // =========================================================
+    async function fetchVolume(vol) {
+        if (_cache[vol.id]) return _cache[vol.id];
+        const url = BASE + vol.path;
+        const res = await fetch(url, {mode:"cors",credentials:"omit"});
+        if (!res.ok) throw new Error("HTTP " + res.status + " fetching " + url);
+        const raw = await res.text();
+        _cache[vol.id] = cleanHtml(raw);
+        return _cache[vol.id];
+    }
+
+    // =========================================================
+    // EXTRACT CHAPTER CONTENT between two anchor IDs
+    // The HTML has <... id="chapter-1"...> tags as anchors.
+    // We find that element and grab everything until the next
+    // chapter anchor or end of document.
+    // =========================================================
+    function extractChapter(fullHtml, anchorId, nextAnchorId) {
+        const tmp = document.createElement("div");
+        tmp.innerHTML = fullHtml;
+
+        const start = tmp.querySelector("#"+anchorId);
+        if (!start) {
+            // Anchor not found — return a helpful message
+            return "<p style='color:#f0883e'>Chapter section <code>#"+anchorId+"</code> not found in this volume.</p><p>The chapter list may not exactly match this volume's structure. Please use the scroll bar to navigate.</p>";
+        }
+
+        const stopEl = nextAnchorId ? tmp.querySelector("#"+nextAnchorId) : null;
+        const result = document.createDocumentFragment();
+        let node = start;
+        while (node) {
+            const nextNode = node.nextSibling;
+            if (stopEl && node === stopEl) break;
+            result.appendChild(node.cloneNode(true));
+            node = nextNode;
+        }
+        const wrapper = document.createElement("div");
+        wrapper.appendChild(result);
+        return wrapper.innerHTML;
+    }
+
+    // =========================================================
+    // SCROLL HELPERS
+    // =========================================================
+    function getPct() { const w=$("sr-cw"); if(!w||w.scrollHeight<=w.clientHeight) return 0; return Math.round(w.scrollTop/(w.scrollHeight-w.clientHeight)*1000)/10; }
+    function restorePct(pct) { if(!pct||pct<=0) return; const w=$("sr-cw"); if(!w) return; setTimeout(()=>{ w.scrollTop=(pct/100)*(w.scrollHeight-w.clientHeight); },150); }
 
     // =========================================================
     // APP STATE
     // =========================================================
-    const App = { page:"home", vol:null, chIdx:0, scrollTimer:null };
-
-    // =========================================================
-    // FETCH CHAPTER HTML from tensurafan.github.io
-    // =========================================================
-    async function fetchChapter(path) {
-        const url = BASE + path;
-        const res = await fetch(url, {mode:"cors",credentials:"omit"});
-        if (!res.ok) throw new Error("HTTP "+res.status+" for "+url);
-        const html = await res.text();
-        const doc = new DOMParser().parseFromString(html, "text/html");
-        // Remove noise
-        ["nav","header","footer","script","style","iframe"].forEach(tag => doc.querySelectorAll(tag).forEach(el=>el.remove()));
-        // Pick best content node
-        const content = doc.querySelector("article,.content,.post-content,.markdown-body,main,#content") || doc.body;
-        // Rewrite relative images
-        content.querySelectorAll("img[src]").forEach(img => {
-            const s = img.getAttribute("src");
-            if (s && !s.startsWith("http")) img.setAttribute("src", new URL(s, url).href);
-        });
-        return content.innerHTML;
-    }
+    const App = { page:"home", vol:null, chIdx:0, saveTimer:null };
+    function stopSave() { if(App.saveTimer){clearInterval(App.saveTimer);App.saveTimer=null;} }
+    function startSave(volId) { stopSave(); App.saveTimer=setInterval(()=>Prog.set(volId,getPct()),3000); }
 
     // =========================================================
     // CSS
     // =========================================================
     const CSS = \`
-#sr-backdrop{position:fixed;inset:0;z-index:99999;background:#0d1117;display:flex;flex-direction:column;font-family:-apple-system,"Segoe UI",system-ui,sans-serif;}
-#sr-topbar{display:flex;align-items:center;gap:10px;padding:10px 18px;background:#161b22;border-bottom:1px solid #30363d;flex-shrink:0;}
-.sr-logo{display:flex;align-items:center;gap:8px;font-weight:700;font-size:1rem;color:#7ee8a2;white-space:nowrap;}
-#sr-close{margin-left:auto;background:transparent;border:1px solid #30363d;color:#8b949e;width:30px;height:30px;border-radius:6px;cursor:pointer;font-size:1.1rem;display:flex;align-items:center;justify-content:center;}
-#sr-close:hover{background:#21262d;color:#e2e8f0;}
-#sr-back{background:transparent;border:1px solid #30363d;color:#8b949e;padding:5px 12px;border-radius:6px;cursor:pointer;font-size:0.82rem;display:none;align-items:center;gap:5px;}
-#sr-back:hover{background:#21262d;color:#e2e8f0;}
-#sr-back.sr-vis{display:flex;}
-#sr-ch-bar{flex:1;font-size:0.85rem;color:#8b949e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;}
-#sr-settings-btn{background:transparent;border:1px solid #30363d;color:#8b949e;padding:5px 9px;border-radius:6px;cursor:pointer;display:none;align-items:center;}
-#sr-settings-btn:hover{background:#21262d;}
-#sr-settings-btn.sr-vis{display:flex;}
+#sr-backdrop{position:fixed;inset:0;z-index:99999;background:#0d1117;display:flex;flex-direction:column;font-family:-apple-system,"Segoe UI",system-ui,sans-serif;color:#e2e8f0;}
+#sr-bar{display:flex;align-items:center;gap:10px;padding:10px 18px;background:#161b22;border-bottom:1px solid #30363d;flex-shrink:0;}
+.sr-logo{display:flex;align-items:center;gap:7px;font-weight:700;font-size:1rem;color:#7ee8a2;white-space:nowrap;}
+#sr-close-btn{margin-left:auto;background:transparent;border:1px solid #30363d;color:#8b949e;width:30px;height:30px;border-radius:6px;cursor:pointer;font-size:1.1rem;display:flex;align-items:center;justify-content:center;}
+#sr-close-btn:hover{background:#21262d;color:#e2e8f0;}
+#sr-back-btn{background:transparent;border:1px solid #30363d;color:#8b949e;padding:5px 11px;border-radius:6px;cursor:pointer;font-size:.82rem;display:none;align-items:center;gap:5px;}
+#sr-back-btn:hover{background:#21262d;color:#e2e8f0;}
+#sr-back-btn.srv{display:flex;}
+#sr-bar-title{flex:1;font-size:.85rem;color:#8b949e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;}
+#sr-cfg-btn{background:transparent;border:1px solid #30363d;color:#8b949e;padding:5px 8px;border-radius:6px;cursor:pointer;display:none;align-items:center;}
+#sr-cfg-btn:hover{background:#21262d;}
+#sr-cfg-btn.srv{display:flex;}
 #sr-main{flex:1;overflow-y:auto;overflow-x:hidden;position:relative;}
 /* HOME */
 #sr-home{padding:28px 22px;max-width:1100px;margin:0 auto;}
-.sr-hero{background:linear-gradient(135deg,#1a2332,#0d2137,#1a1a2e);border:1px solid #30363d;border-radius:14px;padding:32px 40px;margin-bottom:36px;display:flex;align-items:center;gap:28px;}
-.sr-hero-emoji{font-size:56px;filter:drop-shadow(0 0 16px rgba(126,232,162,.4));flex-shrink:0;}
-.sr-hero h1{font-size:1.55rem;font-weight:800;color:#7ee8a2;margin:0 0 6px;}
-.sr-hero p{color:#8b949e;font-size:.9rem;line-height:1.6;margin:0;}
-.sr-continue-banner{background:#161b22;border:1px solid #7ee8a28f;border-radius:10px;padding:16px 20px;margin-bottom:32px;display:flex;align-items:center;gap:16px;cursor:pointer;transition:border-color .2s;}
-.sr-continue-banner:hover{border-color:#7ee8a2;}
-.sr-continue-info{flex:1;}
-.sr-continue-tag{font-size:.7rem;color:#7ee8a2;text-transform:uppercase;letter-spacing:.08em;font-weight:700;margin-bottom:3px;}
-.sr-continue-title{font-weight:700;color:#c9d1d9;font-size:1rem;}
-.sr-continue-sub{color:#8b949e;font-size:.82rem;margin-top:2px;}
-.sr-continue-cta{background:#7ee8a2;color:#0d1117;border:none;padding:8px 16px;border-radius:7px;font-weight:700;cursor:pointer;white-space:nowrap;font-size:.85rem;}
-.sr-sec{font-size:.95rem;font-weight:700;color:#c9d1d9;margin:0 0 16px;display:flex;align-items:center;gap:8px;}
+.sr-hero{background:linear-gradient(135deg,#1a2332,#0d2137,#1a1a2e);border:1px solid #30363d;border-radius:14px;padding:32px 40px;margin-bottom:32px;display:flex;align-items:center;gap:28px;}
+.sr-hero-ico{font-size:52px;filter:drop-shadow(0 0 16px rgba(126,232,162,.35));flex-shrink:0;}
+.sr-hero h1{font-size:1.45rem;font-weight:800;color:#7ee8a2;margin:0 0 6px;}
+.sr-hero p{color:#8b949e;font-size:.88rem;line-height:1.6;margin:0;}
+.sr-cont{background:#161b22;border:1px solid #7ee8a28c;border-radius:10px;padding:14px 18px;margin-bottom:28px;display:flex;align-items:center;gap:14px;cursor:pointer;transition:border-color .2s;}
+.sr-cont:hover{border-color:#7ee8a2;}
+.sr-cont-info{flex:1;}
+.sr-cont-tag{font-size:.68rem;color:#7ee8a2;text-transform:uppercase;letter-spacing:.08em;font-weight:700;margin-bottom:3px;}
+.sr-cont-title{font-weight:700;color:#c9d1d9;font-size:.98rem;}
+.sr-cont-sub{color:#8b949e;font-size:.8rem;margin-top:2px;}
+.sr-cont-cta{background:#7ee8a2;color:#0d1117;border:none;padding:7px 15px;border-radius:7px;font-weight:700;cursor:pointer;white-space:nowrap;font-size:.82rem;}
+.sr-sec{font-size:.9rem;font-weight:700;color:#c9d1d9;margin:0 0 14px;display:flex;align-items:center;gap:8px;}
 .sr-sec::after{content:"";flex:1;height:1px;background:#21262d;}
-.sr-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:16px;margin-bottom:40px;}
-.sr-vol-card{background:#161b22;border:1px solid #21262d;border-radius:10px;overflow:hidden;cursor:pointer;transition:all .2s;position:relative;}
-.sr-vol-card:hover{border-color:#7ee8a2;transform:translateY(-2px);box-shadow:0 8px 24px rgba(0,0,0,.4);}
-.sr-vol-cover{width:100%;aspect-ratio:2/3;background:linear-gradient(135deg,#1f2a38,#0d1a28);display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:2rem;border-bottom:1px solid #21262d;position:relative;}
-.sr-vol-num{font-size:.58rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#7ee8a2;background:rgba(0,0,0,.75);padding:2px 7px;border-radius:3px;position:absolute;top:7px;left:7px;}
-.sr-reading-badge{position:absolute;top:7px;right:7px;background:#7ee8a2;color:#0d1117;font-size:.55rem;font-weight:800;text-transform:uppercase;letter-spacing:.07em;padding:2px 5px;border-radius:3px;}
-.sr-pbar-wrap{position:absolute;bottom:0;left:0;right:0;height:3px;background:rgba(255,255,255,.1);}
-.sr-pbar-fill{height:100%;background:#7ee8a2;transition:width .3s;}
-.sr-vol-info{padding:9px 11px 12px;}
-.sr-vol-name{font-size:.78rem;font-weight:600;color:#c9d1d9;line-height:1.3;margin-bottom:3px;}
-.sr-vol-sub{font-size:.68rem;color:#6e7681;}
-/* VOLUME PAGE */
-#sr-vol-page{padding:28px 22px;max-width:860px;margin:0 auto;}
-.sr-vol-hdr{display:flex;gap:20px;margin-bottom:28px;padding-bottom:20px;border-bottom:1px solid #21262d;}
-.sr-vol-hdr-cover{width:100px;aspect-ratio:2/3;background:linear-gradient(135deg,#1f2a38,#0d1a28);border-radius:7px;display:flex;align-items:center;justify-content:center;font-size:2.2rem;border:1px solid #30363d;flex-shrink:0;}
-.sr-vol-hdr-meta h2{font-size:1.25rem;font-weight:700;color:#c9d1d9;margin:0 0 4px;}
-.sr-vol-hdr-meta p{color:#8b949e;font-size:.85rem;margin:0 0 10px;}
-.sr-vol-progress{font-size:.78rem;color:#7ee8a2;margin-bottom:10px;}
-.sr-cta-btn{background:#7ee8a2;color:#0d1117;border:none;padding:7px 16px;border-radius:7px;font-weight:700;cursor:pointer;font-size:.85rem;}
-.sr-cta-btn:hover{opacity:.87;}
-.sr-ch-list{display:flex;flex-direction:column;gap:3px;}
-.sr-ch-item{display:flex;align-items:center;gap:10px;padding:11px 14px;background:#161b22;border:1px solid #21262d;border-radius:7px;cursor:pointer;transition:all .15s;}
-.sr-ch-item:hover{background:#1c2128;border-color:#30363d;}
-.sr-ch-item.sr-ch-active{border-color:#7ee8a2;background:rgba(126,232,162,.06);}
-.sr-ch-dot{width:7px;height:7px;border-radius:50%;background:#30363d;flex-shrink:0;}
-.sr-ch-item.sr-ch-active .sr-ch-dot{background:#7ee8a2;}
-.sr-ch-title{flex:1;font-size:.88rem;color:#c9d1d9;}
-.sr-ch-item.sr-ch-active .sr-ch-title{color:#7ee8a2;font-weight:600;}
-.sr-ch-bm{font-size:.72rem;color:#7ee8a2;}
+.sr-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(145px,1fr));gap:14px;margin-bottom:36px;}
+.sr-card{background:#161b22;border:1px solid #21262d;border-radius:10px;overflow:hidden;cursor:pointer;transition:all .2s;position:relative;}
+.sr-card:hover{border-color:#7ee8a2;transform:translateY(-2px);box-shadow:0 8px 24px rgba(0,0,0,.4);}
+.sr-cover{width:100%;aspect-ratio:2/3;background:linear-gradient(135deg,#1f2a38,#0d1a28);display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:1.9rem;border-bottom:1px solid #21262d;position:relative;}
+.sr-vnum{font-size:.56rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#7ee8a2;background:rgba(0,0,0,.75);padding:2px 6px;border-radius:3px;position:absolute;top:6px;left:6px;}
+.sr-rdg{position:absolute;top:6px;right:6px;background:#7ee8a2;color:#0d1117;font-size:.52rem;font-weight:800;text-transform:uppercase;letter-spacing:.06em;padding:2px 5px;border-radius:3px;}
+.sr-pb{position:absolute;bottom:0;left:0;right:0;height:3px;background:rgba(255,255,255,.1);}
+.sr-pbf{height:100%;background:#7ee8a2;transition:width .3s;}
+.sr-vinfo{padding:8px 10px 11px;}
+.sr-vname{font-size:.76rem;font-weight:600;color:#c9d1d9;line-height:1.3;margin-bottom:2px;}
+.sr-vsub{font-size:.66rem;color:#6e7681;}
+/* VOL PAGE */
+#sr-vol{padding:26px 22px;max-width:840px;margin:0 auto;}
+.sr-vhdr{display:flex;gap:18px;margin-bottom:24px;padding-bottom:18px;border-bottom:1px solid #21262d;}
+.sr-vhdr-ico{width:90px;aspect-ratio:2/3;background:linear-gradient(135deg,#1f2a38,#0d1a28);border-radius:7px;display:flex;align-items:center;justify-content:center;font-size:2rem;border:1px solid #30363d;flex-shrink:0;}
+.sr-vhdr-meta h2{font-size:1.15rem;font-weight:700;color:#c9d1d9;margin:0 0 4px;}
+.sr-vhdr-meta p{color:#8b949e;font-size:.82rem;margin:0 0 8px;}
+.sr-prog-line{font-size:.76rem;color:#7ee8a2;margin-bottom:8px;}
+.sr-cta{background:#7ee8a2;color:#0d1117;border:none;padding:6px 14px;border-radius:7px;font-weight:700;cursor:pointer;font-size:.82rem;}
+.sr-cta:hover{opacity:.87;}
+.sr-chlist{display:flex;flex-direction:column;gap:3px;}
+.sr-chitem{display:flex;align-items:center;gap:9px;padding:10px 13px;background:#161b22;border:1px solid #21262d;border-radius:7px;cursor:pointer;transition:all .15s;}
+.sr-chitem:hover{background:#1c2128;border-color:#30363d;}
+.sr-chitem.sr-act{border-color:#7ee8a2;background:rgba(126,232,162,.06);}
+.sr-chitem.sr-act .sr-chdot{background:#7ee8a2;}
+.sr-chitem.sr-act .sr-chtitle{color:#7ee8a2;font-weight:600;}
+.sr-chdot{width:6px;height:6px;border-radius:50%;background:#30363d;flex-shrink:0;}
+.sr-chtitle{flex:1;font-size:.86rem;color:#c9d1d9;}
 /* READER */
-#sr-reader-page{display:flex;flex-direction:column;height:100%;overflow:hidden;}
-#sr-reader-nav{display:flex;align-items:center;gap:7px;padding:7px 14px;background:#161b22;border-bottom:1px solid #21262d;flex-shrink:0;}
-#sr-reader-nav button{background:#21262d;border:1px solid #30363d;color:#c9d1d9;padding:5px 13px;border-radius:5px;cursor:pointer;font-size:.82rem;white-space:nowrap;}
-#sr-reader-nav button:hover:not(:disabled){background:#30363d;}
-#sr-reader-nav button:disabled{opacity:.3;cursor:not-allowed;}
-#sr-ch-select{flex:1;background:#21262d;border:1px solid #30363d;color:#c9d1d9;padding:5px 9px;border-radius:5px;font-size:.82rem;}
-#sr-content-wrap{flex:1;overflow-y:auto;overflow-x:hidden;background:#0d1117;}
-#sr-content{max-width:760px;margin:0 auto;padding:36px 28px 80px;font-size:18px;line-height:1.85;color:#e2e8f0;font-family:"Georgia",serif;}
-#sr-content p{margin-bottom:1.15em;}
-#sr-content img{max-width:100%;border-radius:7px;margin:10px 0;}
-#sr-content h1,#sr-content h2,#sr-content h3{font-family:system-ui,sans-serif;color:#7ee8a2;margin:1.4em 0 .45em;}
-/* SETTINGS PANEL */
-#sr-settings-panel{position:absolute;top:46px;right:0;width:260px;background:#161b22;border:1px solid #30363d;border-radius:0 0 0 10px;padding:14px;z-index:200;display:none;box-shadow:-4px 4px 20px rgba(0,0,0,.6);}
-#sr-settings-panel.sr-open{display:block;}
-.sr-srow{margin-bottom:14px;}
-.sr-srow label{display:block;font-size:.72rem;color:#8b949e;margin-bottom:5px;text-transform:uppercase;letter-spacing:.06em;}
-.sr-srow input[type=range]{width:100%;accent-color:#7ee8a2;}
-.sr-srow select{width:100%;background:#21262d;border:1px solid #30363d;color:#c9d1d9;padding:5px 7px;border-radius:5px;font-size:.82rem;}
-.sr-theme-btns{display:flex;gap:5px;}
-.sr-theme-btn{flex:1;padding:5px;border-radius:5px;border:2px solid #30363d;cursor:pointer;font-size:.72rem;font-weight:600;}
-.sr-theme-btn.sr-active{border-color:#7ee8a2;}
-.sr-theme-btn[data-theme=dark]{background:#0d1117;color:#e2e8f0;}
-.sr-theme-btn[data-theme=sepia]{background:#f4ecd8;color:#5b4636;}
-.sr-theme-btn[data-theme=light]{background:#f5f5f5;color:#1a1a1a;}
+#sr-reader{display:flex;flex-direction:column;height:100%;overflow:hidden;}
+#sr-rnav{display:flex;align-items:center;gap:6px;padding:7px 13px;background:#161b22;border-bottom:1px solid #21262d;flex-shrink:0;}
+#sr-rnav button{background:#21262d;border:1px solid #30363d;color:#c9d1d9;padding:5px 12px;border-radius:5px;cursor:pointer;font-size:.8rem;white-space:nowrap;}
+#sr-rnav button:hover:not(:disabled){background:#30363d;}
+#sr-rnav button:disabled{opacity:.3;cursor:not-allowed;}
+#sr-chsel{flex:1;background:#21262d;border:1px solid #30363d;color:#c9d1d9;padding:5px 8px;border-radius:5px;font-size:.8rem;}
+#sr-cw{flex:1;overflow-y:auto;overflow-x:hidden;background:#0d1117;}
+#sr-content{max-width:760px;margin:0 auto;padding:32px 26px 80px;font-size:18px;line-height:1.85;color:#e2e8f0;font-family:"Georgia",serif;}
+#sr-content p{margin-bottom:1.1em;}
+#sr-content img{max-width:100%;border-radius:6px;margin:10px auto;display:block;}
+#sr-content h1.title,#sr-content h1.ch-number,#sr-content h1.ch-name,#sr-content h1.toc-title{font-family:system-ui,sans-serif;color:#7ee8a2;margin:1.3em 0 .4em;}
+#sr-content h1.subtitle,#sr-content p.subtitle{color:#8b949e;font-family:system-ui,sans-serif;font-size:1.1rem;margin-top:-.5em;}
+#sr-content p.no-indent{text-indent:0;}
+#sr-content p.credits-entry,#sr-content p.credits-entry-space{font-size:.85rem;color:#8b949e;margin-bottom:.4em;}
+#sr-content p.toc-chapter,#sr-content p.toc-chapter-space{font-size:.9rem;color:#8b949e;}
+#sr-content a.hlink{color:#7ee8a2;text-decoration:none;}
+#sr-content .pagebreak{border:none;margin:0;padding:0;height:0;}
+#sr-content .full{width:100%;height:auto;}
+/* SETTINGS */
+#sr-cfg{position:absolute;top:46px;right:0;width:255px;background:#161b22;border:1px solid #30363d;border-radius:0 0 0 10px;padding:13px;z-index:200;display:none;box-shadow:-4px 4px 20px rgba(0,0,0,.6);}
+#sr-cfg.sropen{display:block;}
+.sr-sr{margin-bottom:13px;}
+.sr-sr label{display:block;font-size:.7rem;color:#8b949e;margin-bottom:5px;text-transform:uppercase;letter-spacing:.06em;}
+.sr-sr input[type=range]{width:100%;accent-color:#7ee8a2;}
+.sr-sr select{width:100%;background:#21262d;border:1px solid #30363d;color:#c9d1d9;padding:5px 7px;border-radius:5px;font-size:.8rem;}
+.sr-tbtns{display:flex;gap:5px;}
+.sr-tbtn{flex:1;padding:5px;border-radius:5px;border:2px solid #30363d;cursor:pointer;font-size:.7rem;font-weight:600;}
+.sr-tbtn.sr-ta{border-color:#7ee8a2;}
+.sr-tbtn[data-theme=dark]{background:#0d1117;color:#e2e8f0;}
+.sr-tbtn[data-theme=sepia]{background:#f4ecd8;color:#5b4636;}
+.sr-tbtn[data-theme=light]{background:#f5f5f5;color:#1a1a1a;}
 /* SPINNER */
-.sr-spin{display:flex;flex-direction:column;align-items:center;justify-content:center;height:220px;gap:14px;}
-.sr-spin-ring{width:38px;height:38px;border:3px solid #21262d;border-top-color:#7ee8a2;border-radius:50%;animation:sr-spin .7s linear infinite;}
-@keyframes sr-spin{to{transform:rotate(360deg)}}
-.sr-spin p{color:#6e7681;font-size:.88rem;}
-/* ERROR */
-.sr-err{margin:36px auto;max-width:460px;background:#1c1c1c;border:1px solid #f0883e55;border-radius:10px;padding:22px;text-align:center;color:#f0883e;}
-.sr-err p{margin-top:7px;color:#8b949e;font-size:.85rem;}
+.sr-spin{display:flex;flex-direction:column;align-items:center;justify-content:center;height:200px;gap:13px;}
+.sr-ring{width:36px;height:36px;border:3px solid #21262d;border-top-color:#7ee8a2;border-radius:50%;animation:srspin .7s linear infinite;}
+@keyframes srspin{to{transform:rotate(360deg)}}
+.sr-spin p{color:#6e7681;font-size:.86rem;}
+/* ERR */
+.sr-err{margin:32px auto;max-width:440px;background:#1c1c1c;border:1px solid #f0883e55;border-radius:10px;padding:20px;text-align:center;color:#f0883e;}
+.sr-err p{margin-top:6px;color:#8b949e;font-size:.83rem;}
 .sr-err a{color:#f0883e;}
-.sr-err button{margin-top:14px;background:#f0883e;color:#fff;border:none;padding:7px 18px;border-radius:5px;cursor:pointer;font-weight:600;}
-/* SCROLLBAR */
+.sr-err button{margin-top:12px;background:#f0883e;color:#fff;border:none;padding:6px 16px;border-radius:5px;cursor:pointer;font-weight:600;}
 ::-webkit-scrollbar{width:5px;}
 ::-webkit-scrollbar-track{background:transparent;}
 ::-webkit-scrollbar-thumb{background:#30363d;border-radius:3px;}
-::-webkit-scrollbar-thumb:hover{background:#484f58;}
 \`;
 
     // =========================================================
-    // INJECT CSS
+    // INJECT STYLE
     // =========================================================
-    const styleEl = document.createElement("style");
-    styleEl.id = "sr-style";
-    styleEl.textContent = CSS;
-    document.head.appendChild(styleEl);
+    const style = document.createElement("style");
+    style.id = "sr-style";
+    style.textContent = CSS;
+    document.head.appendChild(style);
 
     // =========================================================
-    // BUILD BACKDROP / SHELL
+    // BUILD SHELL
     // =========================================================
-    const backdrop = document.createElement("div");
-    backdrop.id = "sr-backdrop";
-    backdrop.innerHTML = \`
-        <div id="sr-topbar">
-            <div class="sr-logo">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
-                Slime Reader
-            </div>
-            <button id="sr-back">&#8249; Back</button>
-            <span id="sr-ch-bar"></span>
-            <button id="sr-settings-btn" title="Reader settings">
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-            </button>
-            <button id="sr-close">&#x2715;</button>
-        </div>
+    const bd = document.createElement("div");
+    bd.id = "sr-backdrop";
+    bd.innerHTML = \`
+<div id="sr-bar">
+  <div class="sr-logo">
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+    Slime Reader
+  </div>
+  <button id="sr-back-btn">&#8249; Back</button>
+  <span id="sr-bar-title"></span>
+  <button id="sr-cfg-btn">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+  </button>
+  <button id="sr-close-btn">&#x2715;</button>
+</div>
 
-        <div id="sr-settings-panel">
-            <div class="sr-srow">
-                <label>Theme</label>
-                <div class="sr-theme-btns">
-                    <button class="sr-theme-btn sr-active" data-theme="dark">Dark</button>
-                    <button class="sr-theme-btn" data-theme="sepia">Sepia</button>
-                    <button class="sr-theme-btn" data-theme="light">Light</button>
-                </div>
-            </div>
-            <div class="sr-srow"><label>Font Size: <span id="sr-fs-label">18</span>px</label><input type="range" id="sr-fs-slider" min="13" max="28" value="18"></div>
-            <div class="sr-srow"><label>Line Height: <span id="sr-lh-label">1.85</span></label><input type="range" id="sr-lh-slider" min="1.2" max="2.5" step="0.05" value="1.85"></div>
-            <div class="sr-srow"><label>Font Family</label><select id="sr-ff-select"><option value="Georgia, serif">Georgia (Serif)</option><option value="system-ui, sans-serif">Sans-Serif</option><option value="'Courier New', monospace">Monospace</option></select></div>
-            <div class="sr-srow"><label>Max Width: <span id="sr-mw-label">760</span>px</label><input type="range" id="sr-mw-slider" min="400" max="1100" step="20" value="760"></div>
-        </div>
+<div id="sr-cfg">
+  <div class="sr-sr"><label>Theme</label><div class="sr-tbtns">
+    <button class="sr-tbtn sr-ta" data-theme="dark">Dark</button>
+    <button class="sr-tbtn" data-theme="sepia">Sepia</button>
+    <button class="sr-tbtn" data-theme="light">Light</button>
+  </div></div>
+  <div class="sr-sr"><label>Font Size: <span id="sr-fsl">18</span>px</label><input type="range" id="sr-fs" min="13" max="28" value="18"></div>
+  <div class="sr-sr"><label>Line Height: <span id="sr-lhl">1.85</span></label><input type="range" id="sr-lh" min="1.2" max="2.5" step="0.05" value="1.85"></div>
+  <div class="sr-sr"><label>Font</label><select id="sr-ffs"><option value="Georgia, serif">Georgia (Serif)</option><option value="system-ui, sans-serif">Sans-Serif</option><option value="'Courier New', monospace">Monospace</option></select></div>
+  <div class="sr-sr"><label>Width: <span id="sr-mwl">760</span>px</label><input type="range" id="sr-mw" min="400" max="1100" step="20" value="760"></div>
+</div>
 
-        <div id="sr-main">
-            <div id="sr-home"></div>
-            <div id="sr-vol-page" style="display:none"></div>
-            <div id="sr-reader-page" style="display:none;height:100%;">
-                <div id="sr-reader-nav">
-                    <button id="sr-prev">&#8592; Prev</button>
-                    <select id="sr-ch-select"></select>
-                    <button id="sr-next">Next &#8594;</button>
-                </div>
-                <div id="sr-content-wrap"><div id="sr-content"></div></div>
-            </div>
-        </div>
-    \`;
+<div id="sr-main">
+  <div id="sr-home"></div>
+  <div id="sr-vol" style="display:none"></div>
+  <div id="sr-reader" style="display:none;height:100%;">
+    <div id="sr-rnav">
+      <button id="sr-prev">&#8592; Prev</button>
+      <select id="sr-chsel"></select>
+      <button id="sr-next">Next &#8594;</button>
+    </div>
+    <div id="sr-cw"><div id="sr-content"></div></div>
+  </div>
+</div>\`;
 
-    document.body.appendChild(backdrop);
+    document.body.appendChild(bd);
 
     // =========================================================
     // HELPERS
     // =========================================================
     const $ = id => document.getElementById(id);
-    function showOnly(pageId) {
-        ["sr-home","sr-vol-page","sr-reader-page"].forEach(id => $(id).style.display = (id===pageId ? (id==="sr-reader-page"?"flex":"block") : "none"));
-        if (pageId==="sr-reader-page") $(pageId).style.flexDirection = "column";
+    function showPage(pg) {
+        ["sr-home","sr-vol","sr-reader"].forEach(id=>{
+            const el=$(id);
+            if(!el) return;
+            el.style.display = (id===pg) ? (id==="sr-reader"?"flex":"block") : "none";
+            if(id==="sr-reader"&&id===pg) el.style.flexDirection="column";
+        });
     }
-    function setChBar(txt) { $("sr-ch-bar").textContent = txt; }
-
-    function getScrollPct() {
-        const w = $("sr-content-wrap");
-        if (!w || w.scrollHeight <= w.clientHeight) return 0;
-        return Math.round(w.scrollTop / (w.scrollHeight - w.clientHeight) * 1000) / 10;
-    }
-    function restoreScroll(pct) {
-        if (!pct || pct <= 0) return;
-        const w = $("sr-content-wrap");
-        if (!w) return;
-        setTimeout(() => { w.scrollTop = (pct / 100) * (w.scrollHeight - w.clientHeight); }, 150);
-    }
+    function setTitle(t) { $("sr-bar-title").textContent = t; }
 
     // =========================================================
-    // RENDER: HOME
+    // HOME
     // =========================================================
     function renderHome() {
-        App.page = "home";
-        stopScrollSave();
-        showOnly("sr-home");
-        $("sr-back").classList.remove("sr-vis");
-        $("sr-settings-btn").classList.remove("sr-vis");
-        setChBar("");
+        App.page="home"; stopSave();
+        showPage("sr-home");
+        $("sr-back-btn").classList.remove("srv");
+        $("sr-cfg-btn").classList.remove("srv");
+        setTitle("");
 
-        // Find most-recent progress
-        let contVol = null, contProg = null;
-        for (const v of VOLUMES) {
-            const p = Progress.get(v.key);
-            if (p && p.chapterId) { contVol = v; contProg = p; break; }
-        }
+        let contVol=null, contProg=null;
+        for(const v of VOLUMES){ const p=Prog.get(v.id); if(p&&p.scrollPct>0){contVol=v;contProg=p;break;} }
 
-        let contHtml = "";
-        if (contVol && contProg) {
-            const chIdx = contVol.chapters.findIndex(c => c.id === contProg.chapterId);
-            const ch = contVol.chapters[chIdx >= 0 ? chIdx : 0];
-            contHtml = \`<div class="sr-continue-banner" id="sr-cont-banner" data-key="\${contVol.key}" data-chidx="\${chIdx>=0?chIdx:0}" data-scroll="\${contProg.scrollPct}">
-                <div class="sr-continue-info">
-                    <div class="sr-continue-tag">Continue Reading</div>
-                    <div class="sr-continue-title">\${contVol.label}: \${contVol.title}</div>
-                    <div class="sr-continue-sub">\${ch.title} · \${contProg.scrollPct}% read</div>
-                </div>
-                <button class="sr-continue-cta">Resume ›</button>
+        let contHtml="";
+        if(contVol&&contProg){
+            contHtml=\`<div class="sr-cont" id="sr-cont" data-id="\${contVol.id}">
+              <div class="sr-cont-info">
+                <div class="sr-cont-tag">Continue Reading</div>
+                <div class="sr-cont-title">\${contVol.name}</div>
+                <div class="sr-cont-sub">\${contProg.scrollPct}% through</div>
+              </div>
+              <button class="sr-cont-cta">Resume ›</button>
             </div>\`;
         }
 
-        const gridHtml = VOLUMES.map(vol => {
-            const p = Progress.get(vol.key);
-            const pct = p ? p.scrollPct : 0;
-            const badge = p ? \`<span class="sr-reading-badge">Reading</span>\` : "";
-            return \`<div class="sr-vol-card" data-key="\${vol.key}">
-                <div class="sr-vol-cover">\${vol.emoji}
-                    <span class="sr-vol-num">\${vol.label}</span>
-                    \${badge}
-                    <div class="sr-pbar-wrap"><div class="sr-pbar-fill" style="width:\${pct}%"></div></div>
-                </div>
-                <div class="sr-vol-info">
-                    <div class="sr-vol-name">\${vol.title}</div>
-                    <div class="sr-vol-sub">\${vol.chapters.length} chapters</div>
-                </div>
+        const cards = VOLUMES.map(v=>{
+            const p=Prog.get(v.id);
+            const pct=p?p.scrollPct:0;
+            const badge=pct>0?\`<span class="sr-rdg">Reading</span>\`:"";
+            return \`<div class="sr-card" data-id="\${v.id}">
+              <div class="sr-cover">\${v.emoji}
+                <span class="sr-vnum">\${v.name.split(" ").slice(0,2).join(" ")}</span>
+                \${badge}
+                <div class="sr-pb"><div class="sr-pbf" style="width:\${pct}%"></div></div>
+              </div>
+              <div class="sr-vinfo">
+                <div class="sr-vname">\${v.name}</div>
+                <div class="sr-vsub">\${v.chapters.length} chapters</div>
+              </div>
             </div>\`;
         }).join("");
 
-        $("sr-home").innerHTML = \`
-            <div class="sr-hero">
-                <div class="sr-hero-emoji">🟢</div>
-                <div>
-                    <h1>That Time I Got Reincarnated as a Slime</h1>
-                    <p>All 21 light novel volumes · Your reading progress is saved automatically</p>
-                </div>
+        $("sr-home").innerHTML=\`
+          <div class="sr-hero">
+            <div class="sr-hero-ico">🟢</div>
+            <div>
+              <h1>That Time I Got Reincarnated as a Slime</h1>
+              <p>Fan-translated light novels (Vols 6–20 + side stories) · Progress auto-saved</p>
             </div>
-            \${contHtml}
-            <div class="sr-sec">All Volumes</div>
-            <div class="sr-grid">\${gridHtml}</div>
-        \`;
+          </div>
+          \${contHtml}
+          <div class="sr-sec">All Volumes</div>
+          <div class="sr-grid">\${cards}</div>\`;
 
-        $("sr-home").querySelectorAll(".sr-vol-card").forEach(card => {
-            card.addEventListener("click", () => {
-                const vol = VOLUMES.find(v => v.key === card.dataset.key);
-                if (vol) renderVolume(vol);
-            });
+        $("sr-home").querySelectorAll(".sr-card").forEach(c=>{
+            c.addEventListener("click",()=>{ const v=VOLUMES.find(x=>x.id===c.dataset.id); if(v) renderVol(v); });
         });
-
-        const cb = $("sr-cont-banner");
-        if (cb) {
-            cb.addEventListener("click", () => {
-                const vol = VOLUMES.find(v => v.key === cb.dataset.key);
-                if (vol) renderReader(vol, parseInt(cb.dataset.chidx)||0, parseFloat(cb.dataset.scroll)||0);
-            });
-        }
+        const cb=$("sr-cont");
+        if(cb&&contVol){ cb.addEventListener("click",()=>renderReader(contVol,0,contProg.scrollPct)); }
     }
 
     // =========================================================
-    // RENDER: VOLUME PAGE
+    // VOLUME PAGE
     // =========================================================
-    function renderVolume(vol, autoOpen) {
-        App.page = "volume"; App.vol = vol;
-        stopScrollSave();
-        showOnly("sr-vol-page");
-        $("sr-back").classList.add("sr-vis");
-        $("sr-settings-btn").classList.remove("sr-vis");
-        setChBar(vol.label + " — " + vol.title);
+    function renderVol(vol) {
+        App.page="volume"; App.vol=vol; stopSave();
+        showPage("sr-vol");
+        $("sr-back-btn").classList.add("srv");
+        $("sr-cfg-btn").classList.remove("srv");
+        setTitle(vol.name);
 
-        const prog = Progress.get(vol.key);
-        const lastChId = prog ? prog.chapterId : null;
+        const prog=Prog.get(vol.id);
+        const chListHtml = vol.chapters.map((ch,i)=>\`
+          <div class="sr-chitem" data-idx="\${i}">
+            <div class="sr-chdot"></div>
+            <span class="sr-chtitle">\${ch.label}</span>
+          </div>\`).join("");
 
-        const chListHtml = vol.chapters.map((ch, idx) => {
-            const active = lastChId && ch.id === lastChId;
-            const bm = active ? \`<span class="sr-ch-bm">📖</span>\` : "";
-            return \`<div class="sr-ch-item\${active?" sr-ch-active":""}" data-idx="\${idx}">
-                <div class="sr-ch-dot"></div>
-                <span class="sr-ch-title">\${ch.title}</span>
-                \${bm}
-            </div>\`;
-        }).join("");
-
-        const progHtml = prog ? \`<div class="sr-vol-progress">\${prog.scrollPct}% through \${vol.chapters.find(c=>c.id===prog.chapterId)?.title||""}</div>\` : "";
-        const contBtn = lastChId ? \`<button class="sr-cta-btn" id="sr-vol-cont">Continue Reading</button>\` : "";
-
-        $("sr-vol-page").innerHTML = \`
-            <div class="sr-vol-hdr">
-                <div class="sr-vol-hdr-cover">\${vol.emoji}</div>
-                <div class="sr-vol-hdr-meta">
-                    <h2>\${vol.label}</h2>
-                    <p>\${vol.title} · \${vol.chapters.length} chapters</p>
-                    \${progHtml}
-                    \${contBtn}
-                </div>
+        $("sr-vol").innerHTML=\`
+          <div class="sr-vhdr">
+            <div class="sr-vhdr-ico">\${vol.emoji}</div>
+            <div class="sr-vhdr-meta">
+              <h2>\${vol.name}</h2>
+              <p>\${vol.chapters.length} chapters</p>
+              \${prog&&prog.scrollPct>0?\`<div class="sr-prog-line">\${prog.scrollPct}% read</div>\`:""}
+              \${prog&&prog.scrollPct>0?\`<button class="sr-cta" id="sr-volcont">Continue Reading</button>\`:""}
             </div>
-            <div class="sr-sec">Chapters</div>
-            <div class="sr-ch-list">\${chListHtml}</div>
-        \`;
+          </div>
+          <div class="sr-sec">Chapters</div>
+          <div class="sr-chlist">\${chListHtml}</div>\`;
 
-        $("sr-vol-page").querySelectorAll(".sr-ch-item").forEach(item => {
-            item.addEventListener("click", () => renderReader(vol, parseInt(item.dataset.idx)));
+        $("sr-vol").querySelectorAll(".sr-chitem").forEach(item=>{
+            item.addEventListener("click",()=>renderReader(vol,parseInt(item.dataset.idx)));
         });
-
-        const vcb = $("sr-vol-cont");
-        if (vcb && lastChId) {
-            const ri = vol.chapters.findIndex(c => c.id === lastChId);
-            vcb.addEventListener("click", () => renderReader(vol, ri >= 0 ? ri : 0, prog.scrollPct));
-        }
-
-        if (typeof autoOpen === "number") renderReader(vol, autoOpen, prog ? prog.scrollPct : 0);
+        const vcb=$("sr-volcont");
+        if(vcb&&prog) vcb.addEventListener("click",()=>renderReader(vol,0,prog.scrollPct));
     }
 
     // =========================================================
-    // RENDER: READER
+    // READER
     // =========================================================
-    let scrollSaveTimer = null;
-    function stopScrollSave() { if (scrollSaveTimer) { clearInterval(scrollSaveTimer); scrollSaveTimer = null; } }
-
     async function renderReader(vol, chIdx, resumePct) {
-        App.page = "reader"; App.vol = vol; App.chIdx = chIdx;
-        stopScrollSave();
-        showOnly("sr-reader-page");
-        $("sr-back").classList.add("sr-vis");
-        $("sr-settings-btn").classList.add("sr-vis");
+        App.page="reader"; App.vol=vol; App.chIdx=chIdx; stopSave();
+        showPage("sr-reader");
+        $("sr-back-btn").classList.add("srv");
+        $("sr-cfg-btn").classList.add("srv");
 
         const ch = vol.chapters[chIdx];
-        setChBar(vol.label + " · " + ch.title);
+        setTitle(vol.name + " · " + ch.label);
 
-        // Chapter select dropdown
-        const sel = $("sr-ch-select");
-        sel.innerHTML = vol.chapters.map((c, i) => \`<option value="\${i}"\${i===chIdx?" selected":""}>\${c.title}</option>\`).join("");
-        $("sr-prev").disabled = chIdx === 0;
-        $("sr-next").disabled = chIdx === vol.chapters.length - 1;
+        const sel=$("sr-chsel");
+        sel.innerHTML=vol.chapters.map((c,i)=>\`<option value="\${i}"\${i===chIdx?" selected":""}>\${c.label}</option>\`).join("");
+        $("sr-prev").disabled = chIdx===0;
+        $("sr-next").disabled = chIdx===vol.chapters.length-1;
 
-        // Show spinner
-        $("sr-content").innerHTML = \`<div class="sr-spin"><div class="sr-spin-ring"></div><p>Loading chapter…</p></div>\`;
+        $("sr-content").innerHTML=\`<div class="sr-spin"><div class="sr-ring"></div><p>Loading \${ch.label}…</p></div>\`;
 
-        const url = BASE + ch.path;
         try {
-            const html = await fetchChapter(ch.path);
-            $("sr-content").innerHTML = html;
-            Settings.apply();
+            const fullHtml = await fetchVolume(vol);
 
-            // Restore scroll: prefer explicit resumePct, else saved progress if same chapter
-            const savedProg = Progress.get(vol.key);
-            const scrollTo = (typeof resumePct === "number" && resumePct > 0)
-                ? resumePct
-                : (savedProg && savedProg.chapterId === ch.id ? savedProg.scrollPct : 0);
-            restoreScroll(scrollTo);
+            // Get the anchor ID of the NEXT chapter (to know where to stop)
+            const nextCh = vol.chapters[chIdx+1];
+            const chunkHtml = extractChapter(fullHtml, ch.id, nextCh ? nextCh.id : null);
 
-            // Save immediately
-            Progress.set(vol.key, ch.id, scrollTo);
+            $("sr-content").innerHTML = chunkHtml;
+            S.apply();
 
-            // Auto-save every 3s
-            scrollSaveTimer = setInterval(() => {
-                Progress.set(vol.key, ch.id, getScrollPct());
-            }, 3000);
+            const prog = Prog.get(vol.id);
+            const scrollTo = (typeof resumePct==="number"&&resumePct>0) ? resumePct
+                           : (prog&&prog.scrollPct>0 ? prog.scrollPct : 0);
+            // Only restore scroll if we're starting at chapter 0 (whole-book scroll)
+            // For chapter navigation we always start at top
+            if (typeof resumePct==="number"&&resumePct>0) {
+                restorePct(scrollTo);
+            } else {
+                $("sr-cw").scrollTop = 0;
+            }
 
-        } catch (err) {
-            $("sr-content").innerHTML = \`
-                <div class="sr-err">
-                    <strong>⚠️ Could not load chapter</strong>
-                    <p>Failed to fetch from <a href="\${url}" target="_blank">\${url}</a></p>
-                    <p>\${err.message}</p>
-                    <button onclick="document.getElementById('sr-content').dispatchEvent(new CustomEvent('sr-retry'))">Retry</button>
-                </div>\`;
-            $("sr-content").addEventListener("sr-retry", () => renderReader(vol, chIdx, resumePct), {once:true});
+            Prog.set(vol.id, getPct());
+            startSave(vol.id);
+
+        } catch(err) {
+            $("sr-content").innerHTML=\`<div class="sr-err">
+              <strong>⚠️ Could not load volume</strong>
+              <p>\${err.message}</p>
+              <p>Try opening <a href="\${BASE+vol.path}" target="_blank">\${BASE+vol.path}</a> in your browser.</p>
+              <button id="sr-retry">Retry</button>
+            </div>\`;
+            $("sr-retry")&&$("sr-retry").addEventListener("click",()=>renderReader(vol,chIdx,resumePct));
         }
     }
 
     // =========================================================
-    // TOPBAR EVENTS
+    // EVENTS
     // =========================================================
-    $("sr-close").addEventListener("click", cleanup);
+    $("sr-close-btn").addEventListener("click", cleanup);
+    window.addEventListener("keydown", function onEsc(e){ if(e.key==="Escape"){e.preventDefault();cleanup();window.removeEventListener("keydown",onEsc);} });
 
-    $("sr-back").addEventListener("click", () => {
-        if (App.page === "reader") {
-            Progress.set(App.vol.key, App.vol.chapters[App.chIdx].id, getScrollPct());
-            renderVolume(App.vol);
-        } else if (App.page === "volume") {
-            renderHome();
-        }
+    $("sr-back-btn").addEventListener("click",()=>{
+        if(App.page==="reader"){ Prog.set(App.vol.id,getPct()); renderVol(App.vol); }
+        else if(App.page==="volume"){ renderHome(); }
     });
 
-    $("sr-settings-btn").addEventListener("click", e => {
+    $("sr-cfg-btn").addEventListener("click",e=>{
         e.stopPropagation();
-        $("sr-settings-panel").classList.toggle("sr-open");
+        $("sr-cfg").classList.toggle("sropen");
+    });
+    document.addEventListener("click",e=>{
+        const c=$("sr-cfg");
+        if(c&&c.classList.contains("sropen")&&!c.contains(e.target)&&e.target.id!=="sr-cfg-btn")
+            c.classList.remove("sropen");
     });
 
-    document.addEventListener("click", e => {
-        const panel = $("sr-settings-panel");
-        if (panel && panel.classList.contains("sr-open") && !panel.contains(e.target) && e.target.id !== "sr-settings-btn") {
-            panel.classList.remove("sr-open");
-        }
+    $("sr-prev").addEventListener("click",()=>{
+        if(App.chIdx>0){ Prog.set(App.vol.id,getPct()); renderReader(App.vol,App.chIdx-1); }
+    });
+    $("sr-next").addEventListener("click",()=>{
+        if(App.chIdx<App.vol.chapters.length-1){ Prog.set(App.vol.id,getPct()); renderReader(App.vol,App.chIdx+1); }
+    });
+    $("sr-chsel").addEventListener("change",e=>{
+        const i=parseInt(e.target.value);
+        if(i!==App.chIdx){ Prog.set(App.vol.id,getPct()); renderReader(App.vol,i); }
     });
 
-    // ESC to close
-    function onEsc(e) {
-        if (e.key === "Escape") { e.preventDefault(); cleanup(); }
+    // SETTINGS
+    document.querySelectorAll(".sr-tbtn").forEach(b=>{
+        b.addEventListener("click",()=>{ S.get().theme=b.dataset.theme; S.save(); S.apply(); });
+    });
+    function bindSl(slId, lblId, key, parse) {
+        const el=$(slId); if(!el)return;
+        el.addEventListener("input",()=>{ S.get()[key]=parse(el.value); $(lblId).textContent=S.get()[key]; S.save(); S.apply(); });
     }
-    window.addEventListener("keydown", onEsc);
-
-    // =========================================================
-    // READER NAV EVENTS
-    // =========================================================
-    $("sr-prev").addEventListener("click", () => {
-        if (App.chIdx > 0) {
-            Progress.set(App.vol.key, App.vol.chapters[App.chIdx].id, getScrollPct());
-            renderReader(App.vol, App.chIdx - 1);
-        }
-    });
-    $("sr-next").addEventListener("click", () => {
-        if (App.chIdx < App.vol.chapters.length - 1) {
-            Progress.set(App.vol.key, App.vol.chapters[App.chIdx].id, getScrollPct());
-            renderReader(App.vol, App.chIdx + 1);
-        }
-    });
-    $("sr-ch-select").addEventListener("change", e => {
-        const i = parseInt(e.target.value);
-        if (i !== App.chIdx) {
-            Progress.set(App.vol.key, App.vol.chapters[App.chIdx].id, getScrollPct());
-            renderReader(App.vol, i);
-        }
-    });
-
-    // =========================================================
-    // SETTINGS EVENTS
-    // =========================================================
-    document.querySelectorAll(".sr-theme-btn").forEach(btn => {
-        btn.addEventListener("click", () => {
-            Settings.get().theme = btn.dataset.theme;
-            Settings.save(); Settings.apply();
-        });
-    });
-    function bindSlider(sliderId, labelId, key, parse) {
-        const el = $(sliderId); if (!el) return;
-        el.addEventListener("input", () => {
-            Settings.get()[key] = parse(el.value);
-            $(labelId).textContent = Settings.get()[key];
-            Settings.save(); Settings.apply();
-        });
-    }
-    bindSlider("sr-fs-slider","sr-fs-label","fontSize",v=>parseInt(v));
-    bindSlider("sr-lh-slider","sr-lh-label","lineHeight",v=>parseFloat(v));
-    bindSlider("sr-mw-slider","sr-mw-label","maxWidth",v=>parseInt(v));
-    const ffs = $("sr-ff-select");
-    if (ffs) ffs.addEventListener("change", () => { Settings.get().fontFamily = ffs.value; Settings.save(); Settings.apply(); });
+    bindSl("sr-fs","sr-fsl","fontSize",v=>parseInt(v));
+    bindSl("sr-lh","sr-lhl","lineHeight",v=>parseFloat(v));
+    bindSl("sr-mw","sr-mwl","maxWidth",v=>parseInt(v));
+    const ffs=$("sr-ffs");
+    if(ffs) ffs.addEventListener("change",()=>{ S.get().fontFamily=ffs.value; S.save(); S.apply(); });
 
     // =========================================================
     // CLEANUP
     // =========================================================
-    function cleanup() {
-        stopScrollSave();
-        window.removeEventListener("keydown", onEsc);
+    function cleanup(){
+        stopSave();
         $("sr-backdrop")?.remove();
         $("sr-style")?.remove();
-        document.querySelector(\`script[data-sr-id="${scriptId}"]\`)?.remove();
     }
 
     // =========================================================
     // BOOT
     // =========================================================
-    Settings.apply();
+    S.apply();
     renderHome();
 
-})();
-`;
+})()\n`;
         }
 
-        // ------------------------------------------------------------------
-        // TRAY: clicking the icon injects the script into Seanime's DOM
-        // ------------------------------------------------------------------
         const tray = ctx.newTray({
             tooltipText: "Slime Reader",
             iconUrl: "data:image/svg+xml," + encodeURIComponent(
@@ -779,19 +559,14 @@ function init() {
 
         tray.onClick(async () => {
             try {
-                // Don't open twice
                 if (await ctx.dom.queryOne("#sr-backdrop")) return;
-
                 const body = await ctx.dom.queryOne("body");
                 if (!body) return;
-
-                const scriptId = "sr-script-" + Date.now();
                 const script = await ctx.dom.createElement("script");
-                script.setAttribute("data-sr-id", scriptId);
-                script.setText(getInjectedScript(scriptId));
+                script.setText(getInjectedScript());
                 body.append(script);
             } catch (err) {
-                console.error("[SlimeReader] Tray error:", err);
+                console.error("[SlimeReader]", err);
             }
         });
     });
