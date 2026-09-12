@@ -3,8 +3,8 @@
 /// <reference path="./app.d.ts" />
 /// <reference path="./core.d.ts" />
 
-// Slime Reader – loads the reader logic from an external JS file (like LN-reader does)
-// so the injected script tag only contains a tiny fetch+eval bootstrap.
+// Slime Reader – loads reader.js via <script src="..."> which browsers always execute,
+// unlike inline textContent which is blocked by Electron's CSP.
 
 function init() {
     $ui.register((ctx) => {
@@ -30,18 +30,14 @@ function init() {
                 const body = await ctx.dom.queryOne("body");
                 if (!body) { console.error("[slime-reader] No body!"); return; }
 
-                // Inject a tiny bootstrap script that fetches+evals the real reader
+                // Use <script src="..."> — this is executed by the browser regardless of CSP,
+                // unlike textContent/innerHTML which is blocked as unsafe-inline.
+                // Add a cache-busting param so updates always load fresh.
                 const script = await ctx.dom.createElement("script");
-                script.setAttribute("id", "sr-bootstrap");
-                script.setText(`(function(){
-    if(document.getElementById('sr-backdrop')) return;
-    fetch('${READER_JS_URL}?_=${Date.now()}', {cache:'no-store'})
-        .then(r=>r.text())
-        .then(code=>{ var s=document.createElement('script'); s.textContent=code; document.head.appendChild(s); })
-        .catch(e=>console.error('[slime-reader] Failed to load reader.js', e));
-})()`);
+                script.setAttribute("id", "sr-loader");
+                script.setAttribute("src", READER_JS_URL + "?v=" + Date.now());
                 body.append(script);
-                console.log("[slime-reader] Bootstrap injected.");
+                console.log("[slime-reader] Script src injected.");
             } catch (err) {
                 console.error("[slime-reader] Error:", err);
             }
