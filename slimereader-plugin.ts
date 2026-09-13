@@ -68,14 +68,14 @@ function init() {
         webview.channel.sync("isLoading",   isLoading);
         webview.channel.sync("currentVol",  currentVol);
 
-        webview.channel.on("load-volume", (volId: string) => {
+        webview.channel.on("load-volume", async (volId: string) => {
             console.log("[slime-reader] load-volume: " + volId);
             const vol = VOLUMES.find(v => v.id === volId);
             if (!vol) return;
             isLoading.set(true);
             currentVol.set(volId);
             try {
-                const res = ctx.fetch(BASE + vol.path);
+                const res = await ctx.fetch(BASE + vol.path);
                 if (!res.ok) {
                     pageContent.set(`<p style="color:#f0883e">HTTP ${res.status} loading ${vol.name}</p>`);
                 } else {
