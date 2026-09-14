@@ -1,7 +1,7 @@
 {
     "id": "slimereader-plugin",
     "name": "Slime Reader",
-    "version": "14.0.0",
+    "version": "15.0.0",
     "manifestURI": "https://raw.githubusercontent.com/FemboyEnjoyerAndLover/slime-reader-seanime/main/slimereader-plugin.json",
     "description": "Read That Time I Got Reincarnated as a Slime light novels inside Seanime. Vols 6-20 + side stories.",
     "author": "FemboyEnjoyerAndLover",
@@ -16,8 +16,8 @@
             "scopes": [],
             "allow": {
                 "networkAccess": {
-                    "allowedDomains": ["tensurafan.github.io"],
-                    "reasoning": "Needed to fetch light novel chapter content"
+                    "allowedDomains": ["raw.githubusercontent.com"],
+                    "reasoning": "Fetches light novel HTML and cover images from the tensurafan GitHub Pages source repo, avoiding rate limits from the live site"
                 }
             }
         }

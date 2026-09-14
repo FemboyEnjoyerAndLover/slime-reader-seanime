@@ -7,7 +7,7 @@ function init() {
     $ui.register((ctx) => {
         console.log("[slime-reader] registered");
 
-        const BASE = "https://tensurafan.github.io";
+        const BASE = "https://raw.githubusercontent.com/tensurafan/tensurafan.github.io/master";
 
         const VOLUMES = [
             { id:"v6",    name:"Volume 6",               path:"/ln/v6.html",    coverSrc:"Volume 6" },
