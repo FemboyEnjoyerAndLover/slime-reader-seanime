@@ -31,23 +31,40 @@ function init() {
             { id:"b5",    name:"Booklets 5-8",           path:"/ln/b5.html",    coverSrc:"Booklets 5" },
         ];
 
-        // Cards use lazy loading and emoji fallback — no eager image requests on grid load
+        // ── Progress via $storage (localStorage not available in sandboxed iframe) ──
+        function getProgress(id: string): number {
+            try { return parseFloat($storage.get("sr_p_" + id) || "0") || 0; } catch(_) { return 0; }
+        }
+        function saveProgress(id: string, pct: number) {
+            try { $storage.set("sr_p_" + id, String(pct)); } catch(_) {}
+        }
+
+        // ── Build progress map to send to iframe on load ──────────────────────
+        function buildProgressMap(): Record<string, number> {
+            const map: Record<string, number> = {};
+            for (const v of VOLUMES) { map[v.id] = getProgress(v.id); }
+            return map;
+        }
+
+        // ── Covers from raw github ─────────────────────────────────────────────
         const CARDS_HTML = VOLUMES.map(v => {
             const coverPng  = `${BASE}/ln/sources/${encodeURIComponent(v.coverSrc)}/illustrations/cover.png`;
-            const coverJpeg = coverPng.replace(".png", ".jpeg");
-            return `<div class="card" data-id="${v.id}" onclick="openVol('${v.id}','${encodeURIComponent(v.name)}','${v.path}','${encodeURIComponent(v.coverSrc)}')">` +
+            const coverJpeg = `${BASE}/ln/sources/${encodeURIComponent(v.coverSrc)}/illustrations/cover.jpeg`;
+            return `<div class="card" data-id="${v.id}" onclick="openVol('${v.id}','${encodeURIComponent(v.name)}')">` +
                 `<div class="cover">` +
-                // lazy loading prevents 429 by only loading visible/scrolled-to images
-                `<img loading="lazy" src="${coverPng}" onerror="this.onerror=null;this.src='${coverJpeg}'" alt="${v.name}" style="width:100%;height:100%;object-fit:cover;display:block">` +
+                `<img loading="lazy" src="${coverPng}" onerror="this.onerror=null;this.src='${coverJpeg}'" alt="${v.name}">` +
                 `<div class="pbar-wrap"><div class="pbar-fill" id="pb-${v.id}" style="width:0%"></div></div>` +
                 `</div>` +
                 `<div class="vinfo"><div class="vname">${v.name}</div></div>` +
                 `</div>`;
         }).join("");
 
-        const pageContent = ctx.state<string>("");
-        const currentVol  = ctx.state<string>("");
+        // ── State ──────────────────────────────────────────────────────────────
+        const pageContent   = ctx.state<string>("");
+        const currentVol    = ctx.state<string>("");
+        const progressMap   = ctx.state<Record<string, number>>({});
 
+        // ── Webview ────────────────────────────────────────────────────────────
         const webview = ctx.newWebview({
             slot: "screen",
             fullWidth: true,
@@ -61,12 +78,15 @@ function init() {
 
         webview.channel.sync("pageContent", pageContent);
         webview.channel.sync("currentVol",  currentVol);
+        webview.channel.sync("progressMap", progressMap);
 
+        // ── Load volume ────────────────────────────────────────────────────────
         webview.channel.on("load-volume", async (volId: string) => {
             console.log("[slime-reader] load-volume: " + volId);
             const vol = VOLUMES.find(v => v.id === volId);
             if (!vol) return;
             currentVol.set(volId);
+            pageContent.set("__LOADING__");
             try {
                 const res = await ctx.fetch(BASE + vol.path);
                 if (!res.ok) {
@@ -75,36 +95,57 @@ function init() {
                 }
                 let html = res.text();
 
-                // Fix image src to absolute before any other processing
+                // ── Fix terms SERVER-SIDE with regex ──────────────────────────
+                // Each clickable span looks like:
+                // <span class="clickable {...}|{...}|" data-term="Demon Lord" onclick="...">TEMPLATE_JUNK</span>
+                // We replace the whole span with just the data-term value.
+                // This regex captures the data-term attribute and discards everything else.
+                html = html.replace(
+                    /<span\s[^>]*?data-term="([^"]*)"[^>]*>[\s\S]*?<\/span>/g,
+                    "$1"
+                );
+
+                // Fix image src to raw github
                 html = html.replace(/src="\/ln\//g, `src="${BASE}/ln/`);
 
-                // Strip tags we don't want
+                // Strip unwanted tags
                 html = html.replace(/<script[\s\S]*?<\/script>/gi, "");
                 html = html.replace(/<style[\s\S]*?<\/style>/gi, "");
                 html = html.replace(/<nav[\s\S]*?<\/nav>/gi, "");
                 html = html.replace(/<header[\s\S]*?<\/header>/gi, "");
                 html = html.replace(/<footer[\s\S]*?<\/footer>/gi, "");
 
-                // Remove onclick handlers
-                html = html.replace(/ onclick="[^"]*"/g, "");
+                // Disable all internal anchor hrefs (they cause the sandbox cookie error)
+                // Convert <a href="#chapter-1"> to <a data-anchor="chapter-1"> 
+                html = html.replace(/<a\s([^>]*?)href="#([^"]*)"([^>]*)>/g, '<a $1data-anchor="$2"$3>');
+                // Strip all other hrefs to external URLs (keep the link text, just disable navigation)
+                html = html.replace(/<a\s([^>]*?)href="http[^"]*"([^>]*)>/g, '<a $1$2>');
 
-                // The template expressions cannot be fully resolved by regex because
-                // the fallback is itself a template: {allTermsChosen[this.parentNode.dataset.term]}
-                // We send the raw HTML to the iframe and let the DOM do the replacement
-                // using each span's data-term attribute as the display text.
-                // Mark it so the iframe knows to post-process it.
-                pageContent.set("__NEEDS_TERM_FIX__" + html);
-
+                pageContent.set(html);
             } catch(e: any) {
                 pageContent.set(`<p style="color:#f0883e">Error: ${String(e)}</p>`);
             }
         });
 
+        // ── Save progress from iframe ──────────────────────────────────────────
+        webview.channel.on("save-progress", (data: { id: string; pct: number }) => {
+            if (!data || !data.id) return;
+            saveProgress(data.id, data.pct);
+        });
+
+        // ── Request progress for a volume (sent when iframe opens a vol) ──────
+        webview.channel.on("get-progress", (volId: string) => {
+            progressMap.set(buildProgressMap());
+        });
+
         webview.channel.on("go-home", (_: any) => {
             currentVol.set("");
             pageContent.set("");
+            // Refresh progress map so bars update
+            progressMap.set(buildProgressMap());
         });
 
+        // ── Tray ───────────────────────────────────────────────────────────────
         const tray = ctx.newTray({
             tooltipText: "Slime Reader",
             iconUrl: "data:image/svg+xml," + encodeURIComponent(
@@ -114,9 +155,11 @@ function init() {
         });
 
         tray.onClick(() => {
+            progressMap.set(buildProgressMap());
             ctx.screen.navigateTo(webview.getScreenPath());
         });
 
+        // ── HTML ───────────────────────────────────────────────────────────────
         webview.setContent(() => `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -143,6 +186,7 @@ html, body { height: 100%; color-scheme: dark; background: #0d1117; color: #e2e8
 .card { background: #161b22; border: 1px solid #21262d; border-radius: 9px; overflow: hidden; cursor: pointer; transition: all .18s; }
 .card:hover { border-color: #7ee8a2; transform: translateY(-2px); box-shadow: 0 8px 20px rgba(0,0,0,.4); }
 .cover { width: 100%; aspect-ratio: 2/3; background: linear-gradient(135deg,#1f2a38,#0d1a28); position: relative; overflow: hidden; }
+.cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .pbar-wrap { position: absolute; bottom: 0; left: 0; right: 0; height: 3px; background: rgba(255,255,255,.1); }
 .pbar-fill { height: 100%; background: #7ee8a2; transition: width .3s; }
 .vinfo { padding: 8px 10px 11px; }
@@ -152,8 +196,7 @@ html, body { height: 100%; color-scheme: dark; background: #0d1117; color: #e2e8
 #reader-wrap img { max-width: 100%; height: auto; border-radius: 6px; margin: 10px auto; display: block; }
 #reader-wrap h1 { font-family: system-ui, sans-serif; color: #7ee8a2; margin: 1.3em 0 .4em; font-size: 1.4rem; }
 #reader-wrap h1.title { font-size: 1.6rem; }
-#reader-wrap a { color: #7ee8a2; text-decoration: none; }
-#reader-wrap .clickable { border-bottom: none !important; cursor: default; }
+#reader-wrap a { color: #7ee8a2; text-decoration: none; cursor: pointer; }
 #reader-wrap .scenebreak { text-align: center; margin: 1.5em 0; }
 #reader-wrap .ornament-soft { width: 60px; opacity: .5; }
 .spinner { display: flex; align-items: center; justify-content: center; height: 200px; }
@@ -185,75 +228,53 @@ html, body { height: 100%; color-scheme: dark; background: #0d1117; color: #e2e8
   </div>
 </div>
 <script>
-// ── Progress ──────────────────────────────────────────────────────
-function getProgress(id) { try { return parseFloat(localStorage.getItem("sr_p_"+id)||"0")||0; } catch(e){return 0;} }
-function saveProgress(id,pct) { try { localStorage.setItem("sr_p_"+id,String(pct)); } catch(e){} }
+var _volId = null;
+var _saveTimer = null;
+var _progMap = {};
 
-function refreshBars() {
-    document.querySelectorAll(".card[data-id]").forEach(function(c) {
-        var b = document.getElementById("pb-"+c.dataset.id);
-        if (b) b.style.width = getProgress(c.dataset.id) + "%";
-    });
-}
-
-// ── Scroll save ───────────────────────────────────────────────────
-var _volId = null, _saveTimer = null;
-
+// ── Scroll save — sent to plugin via channel, not localStorage ────
 function startSave(id) {
     stopSave(); _volId = id;
     _saveTimer = setInterval(function() {
         var m = document.getElementById("main");
         if (!m || m.scrollHeight <= m.clientHeight) return;
-        saveProgress(id, Math.round(m.scrollTop/(m.scrollHeight-m.clientHeight)*1000)/10);
+        var pct = Math.round(m.scrollTop / (m.scrollHeight - m.clientHeight) * 1000) / 10;
+        if (window.webview) window.webview.send("save-progress", { id: id, pct: pct });
     }, 2000);
 }
-function stopSave() { if(_saveTimer){clearInterval(_saveTimer);_saveTimer=null;} }
+function stopSave() { if (_saveTimer) { clearInterval(_saveTimer); _saveTimer = null; } }
 
-function restoreScroll(id) {
-    var pct = getProgress(id);
-    if (pct <= 0) return;
+function restoreScroll(pct) {
+    if (!pct || pct <= 0) return;
     var m = document.getElementById("main");
     if (!m) return;
-    // Wait for images to partially load before scrolling
-    setTimeout(function() { m.scrollTop = (pct/100)*(m.scrollHeight-m.clientHeight); }, 300);
+    setTimeout(function() { m.scrollTop = (pct / 100) * (m.scrollHeight - m.clientHeight); }, 300);
 }
 
-// ── Term fix: replace .clickable spans with their data-term value ─
-// The site uses data-term on the span's PARENT node.
-// Structure: <span class="clickable" ... >{template}</span>
-// where the parent element has data-term="Actual Term Name"
-function fixTerms(container) {
-    // Each clickable span is inside an element with data-term
-    container.querySelectorAll("[data-term]").forEach(function(el) {
-        var term = el.getAttribute("data-term");
-        if (!term) return;
-        // Replace the inner span (which holds the template garbage) with just the term text
-        el.querySelectorAll(".clickable").forEach(function(span) {
-            span.replaceWith(document.createTextNode(term));
-        });
-        // Also clean up any remaining template text directly in the element
-        el.childNodes.forEach(function(node) {
-            if (node.nodeType === 3) { // text node
-                node.textContent = node.textContent
-                    .replace(/\{:[\s\S]*?:\}\|[^|]*\|/g, term)
-                    .replace(/\{[^}]*\}\|[^|]*\|/g, term);
-            }
-        });
+// ── Progress bars ─────────────────────────────────────────────────
+function refreshBars(map) {
+    Object.keys(map).forEach(function(id) {
+        var b = document.getElementById("pb-" + id);
+        if (b) b.style.width = (map[id] || 0) + "%";
     });
-    // Final sweep: catch any remaining template expressions anywhere in the text
-    container.querySelectorAll("*").forEach(function(el) {
-        el.childNodes.forEach(function(node) {
-            if (node.nodeType === 3 && node.textContent.indexOf("{") !== -1) {
-                node.textContent = node.textContent
-                    .replace(/\{[^}]*\}\|[^|]*\|/g, "")
-                    .replace(/\{:[^}]*:\}/g, "");
+}
+
+// ── Chapter anchor clicks (replaces href="#id" which causes sandbox error) ──
+function setupAnchorLinks(container) {
+    container.querySelectorAll("a[data-anchor]").forEach(function(a) {
+        a.addEventListener("click", function(e) {
+            e.preventDefault();
+            var anchor = a.getAttribute("data-anchor");
+            var target = document.getElementById(anchor) || document.querySelector("[id='" + anchor + "']");
+            if (target) {
+                target.scrollIntoView({ behavior: "smooth" });
             }
         });
     });
 }
 
 // ── Nav ───────────────────────────────────────────────────────────
-function openVol(id, nameEnc, path, coverSrcEnc) {
+function openVol(id, nameEnc) {
     _volId = id;
     document.getElementById("home-wrap").style.display = "none";
     document.getElementById("reader-wrap").style.display = "block";
@@ -265,11 +286,13 @@ function openVol(id, nameEnc, path, coverSrcEnc) {
 }
 
 function goHome() {
-    // Save scroll before leaving
+    // Save current scroll before leaving
     if (_volId) {
         var m = document.getElementById("main");
-        if (m && m.scrollHeight > m.clientHeight)
-            saveProgress(_volId, Math.round(m.scrollTop/(m.scrollHeight-m.clientHeight)*1000)/10);
+        if (m && m.scrollHeight > m.clientHeight) {
+            var pct = Math.round(m.scrollTop / (m.scrollHeight - m.clientHeight) * 1000) / 10;
+            if (window.webview) window.webview.send("save-progress", { id: _volId, pct: pct });
+        }
     }
     stopSave(); _volId = null;
     if (window.webview) window.webview.send("go-home", null);
@@ -279,23 +302,32 @@ function goHome() {
     document.getElementById("back-btn").style.display = "none";
     document.getElementById("page-title").textContent = "";
     document.getElementById("main").scrollTop = 0;
-    refreshBars();
 }
 
 // ── Channel ───────────────────────────────────────────────────────
 if (window.webview) {
     window.webview.on("pageContent", function(html) {
-        if (!html) return;
+        if (!html || html === "__LOADING__") {
+            document.getElementById("reader-wrap").innerHTML = '<div class="spinner"><div class="ring"></div></div>';
+            return;
+        }
         var r = document.getElementById("reader-wrap");
-        var needsFix = html.indexOf("__NEEDS_TERM_FIX__") === 0;
-        r.innerHTML = needsFix ? html.slice("__NEEDS_TERM_FIX__".length) : html;
-        if (needsFix) fixTerms(r);
+        r.innerHTML = html;
+        setupAnchorLinks(r);
         document.getElementById("main").scrollTop = 0;
-        if (_volId) { restoreScroll(_volId); startSave(_volId); }
+        // Restore saved progress
+        var savedPct = _progMap[_volId] || 0;
+        restoreScroll(savedPct);
+        startSave(_volId);
     });
-}
 
-refreshBars();
+    window.webview.on("progressMap", function(map) {
+        _progMap = map || {};
+        refreshBars(_progMap);
+    });
+
+    // currentVol sync not needed in iframe beyond what openVol already tracks
+}
 </script>
 </body>
 </html>`);
