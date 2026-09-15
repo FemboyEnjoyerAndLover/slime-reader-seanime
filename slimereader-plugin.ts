@@ -31,22 +31,25 @@ function init() {
             { id:"b5",    name:"Booklets 5-8",           path:"/ln/b5.html",    coverSrc:"Booklets 5" },
         ];
 
-        // ── Progress via $storage (localStorage not available in sandboxed iframe) ──
+        // ── Progress via $storage ──────────────────────────────────────────────
         function getProgress(id: string): number {
-            try { return parseFloat($storage.get("sr_p_" + id) || "0") || 0; } catch(_) { return 0; }
+            try {
+                const val = $storage.get<number>("sr_p_" + id);
+                if (val === undefined || val === null) return 0;
+                const n = Number(val);
+                return isNaN(n) ? 0 : n;
+            } catch(_) { return 0; }
         }
         function saveProgress(id: string, pct: number) {
-            try { $storage.set("sr_p_" + id, String(pct)); } catch(_) {}
+            try { $storage.set("sr_p_" + id, pct); } catch(_) {}
         }
-
-        // ── Build progress map to send to iframe on load ──────────────────────
         function buildProgressMap(): Record<string, number> {
             const map: Record<string, number> = {};
             for (const v of VOLUMES) { map[v.id] = getProgress(v.id); }
             return map;
         }
 
-        // ── Covers from raw github ─────────────────────────────────────────────
+        // ── Cards HTML ────────────────────────────────────────────────────────
         const CARDS_HTML = VOLUMES.map(v => {
             const coverPng  = `${BASE}/ln/sources/${encodeURIComponent(v.coverSrc)}/illustrations/cover.png`;
             const coverJpeg = `${BASE}/ln/sources/${encodeURIComponent(v.coverSrc)}/illustrations/cover.jpeg`;
@@ -59,12 +62,11 @@ function init() {
                 `</div>`;
         }).join("");
 
-        // ── State ──────────────────────────────────────────────────────────────
-        const pageContent   = ctx.state<string>("");
-        const currentVol    = ctx.state<string>("");
-        const progressMap   = ctx.state<Record<string, number>>({});
+        // ── State ─────────────────────────────────────────────────────────────
+        const pageContent = ctx.state<string>("");
+        const progressMap = ctx.state<Record<string, number>>({});
 
-        // ── Webview ────────────────────────────────────────────────────────────
+        // ── Webview ───────────────────────────────────────────────────────────
         const webview = ctx.newWebview({
             slot: "screen",
             fullWidth: true,
@@ -77,15 +79,12 @@ function init() {
         });
 
         webview.channel.sync("pageContent", pageContent);
-        webview.channel.sync("currentVol",  currentVol);
         webview.channel.sync("progressMap", progressMap);
 
-        // ── Load volume ────────────────────────────────────────────────────────
         webview.channel.on("load-volume", async (volId: string) => {
             console.log("[slime-reader] load-volume: " + volId);
             const vol = VOLUMES.find(v => v.id === volId);
             if (!vol) return;
-            currentVol.set(volId);
             pageContent.set("__LOADING__");
             try {
                 const res = await ctx.fetch(BASE + vol.path);
@@ -95,17 +94,13 @@ function init() {
                 }
                 let html = res.text();
 
-                // ── Fix terms SERVER-SIDE with regex ──────────────────────────
-                // Each clickable span looks like:
-                // <span class="clickable {...}|{...}|" data-term="Demon Lord" onclick="...">TEMPLATE_JUNK</span>
-                // We replace the whole span with just the data-term value.
-                // This regex captures the data-term attribute and discards everything else.
+                // Replace clickable term spans with just the data-term text
                 html = html.replace(
                     /<span\s[^>]*?data-term="([^"]*)"[^>]*>[\s\S]*?<\/span>/g,
                     "$1"
                 );
 
-                // Fix image src to raw github
+                // Fix image srcs to absolute raw github URLs
                 html = html.replace(/src="\/ln\//g, `src="${BASE}/ln/`);
 
                 // Strip unwanted tags
@@ -115,11 +110,9 @@ function init() {
                 html = html.replace(/<header[\s\S]*?<\/header>/gi, "");
                 html = html.replace(/<footer[\s\S]*?<\/footer>/gi, "");
 
-                // Disable all internal anchor hrefs (they cause the sandbox cookie error)
-                // Convert <a href="#chapter-1"> to <a data-anchor="chapter-1"> 
-                html = html.replace(/<a\s([^>]*?)href="#([^"]*)"([^>]*)>/g, '<a $1data-anchor="$2"$3>');
-                // Strip all other hrefs to external URLs (keep the link text, just disable navigation)
-                html = html.replace(/<a\s([^>]*?)href="http[^"]*"([^>]*)>/g, '<a $1$2>');
+                // Strip ALL href attributes entirely — the iframe handles anchor
+                // scrolling via data-anchor; external links we don't need
+                html = html.replace(/ href="[^"]*"/g, "");
 
                 pageContent.set(html);
             } catch(e: any) {
@@ -127,25 +120,28 @@ function init() {
             }
         });
 
-        // ── Save progress from iframe ──────────────────────────────────────────
-        webview.channel.on("save-progress", (data: { id: string; pct: number }) => {
-            if (!data || !data.id) return;
-            saveProgress(data.id, data.pct);
-        });
-
-        // ── Request progress for a volume (sent when iframe opens a vol) ──────
-        webview.channel.on("get-progress", (volId: string) => {
-            progressMap.set(buildProgressMap());
+        // Save progress — data comes as JSON string from the channel
+        webview.channel.on("save-progress", (data: any) => {
+            try {
+                const parsed = typeof data === "string" ? JSON.parse(data) : data;
+                if (parsed && parsed.id) {
+                    const pct = Number(parsed.pct);
+                    if (!isNaN(pct)) {
+                        saveProgress(parsed.id, pct);
+                        console.log("[slime-reader] saved progress " + parsed.id + " = " + pct);
+                    }
+                }
+            } catch(e) {
+                console.error("[slime-reader] save-progress error: " + String(e));
+            }
         });
 
         webview.channel.on("go-home", (_: any) => {
-            currentVol.set("");
             pageContent.set("");
-            // Refresh progress map so bars update
             progressMap.set(buildProgressMap());
         });
 
-        // ── Tray ───────────────────────────────────────────────────────────────
+        // ── Tray ──────────────────────────────────────────────────────────────
         const tray = ctx.newTray({
             tooltipText: "Slime Reader",
             iconUrl: "data:image/svg+xml," + encodeURIComponent(
@@ -159,7 +155,7 @@ function init() {
             ctx.screen.navigateTo(webview.getScreenPath());
         });
 
-        // ── HTML ───────────────────────────────────────────────────────────────
+        // ── HTML ──────────────────────────────────────────────────────────────
         webview.setContent(() => `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -232,17 +228,43 @@ var _volId = null;
 var _saveTimer = null;
 var _progMap = {};
 
-// ── Scroll save — sent to plugin via channel, not localStorage ────
+// ── Intercept ALL link clicks in the reader to prevent sandbox errors ─
+// We do this at the document level so it catches links added dynamically
+document.addEventListener("click", function(e) {
+    var a = e.target.closest("a");
+    if (!a) return;
+    // Always prevent default — we handle navigation ourselves
+    e.preventDefault();
+    e.stopPropagation();
+    var href = a.getAttribute("href");
+    // Internal anchor — scroll to it
+    if (href && href.startsWith("#")) {
+        var id = href.slice(1);
+        var target = document.getElementById(id);
+        if (target) target.scrollIntoView({ behavior: "smooth" });
+    }
+    // All other links (external URLs) — do nothing
+}, true); // capture phase so it fires before any inline handlers
+
+// ── Progress save ─────────────────────────────────────────────────
 function startSave(id) {
     stopSave(); _volId = id;
     _saveTimer = setInterval(function() {
         var m = document.getElementById("main");
         if (!m || m.scrollHeight <= m.clientHeight) return;
         var pct = Math.round(m.scrollTop / (m.scrollHeight - m.clientHeight) * 1000) / 10;
-        if (window.webview) window.webview.send("save-progress", { id: id, pct: pct });
+        if (window.webview) window.webview.send("save-progress", JSON.stringify({ id: id, pct: pct }));
     }, 2000);
 }
 function stopSave() { if (_saveTimer) { clearInterval(_saveTimer); _saveTimer = null; } }
+
+function saveNow() {
+    if (!_volId) return;
+    var m = document.getElementById("main");
+    if (!m || m.scrollHeight <= m.clientHeight) return;
+    var pct = Math.round(m.scrollTop / (m.scrollHeight - m.clientHeight) * 1000) / 10;
+    if (window.webview) window.webview.send("save-progress", JSON.stringify({ id: _volId, pct: pct }));
+}
 
 function restoreScroll(pct) {
     if (!pct || pct <= 0) return;
@@ -251,25 +273,10 @@ function restoreScroll(pct) {
     setTimeout(function() { m.scrollTop = (pct / 100) * (m.scrollHeight - m.clientHeight); }, 300);
 }
 
-// ── Progress bars ─────────────────────────────────────────────────
 function refreshBars(map) {
     Object.keys(map).forEach(function(id) {
         var b = document.getElementById("pb-" + id);
         if (b) b.style.width = (map[id] || 0) + "%";
-    });
-}
-
-// ── Chapter anchor clicks (replaces href="#id" which causes sandbox error) ──
-function setupAnchorLinks(container) {
-    container.querySelectorAll("a[data-anchor]").forEach(function(a) {
-        a.addEventListener("click", function(e) {
-            e.preventDefault();
-            var anchor = a.getAttribute("data-anchor");
-            var target = document.getElementById(anchor) || document.querySelector("[id='" + anchor + "']");
-            if (target) {
-                target.scrollIntoView({ behavior: "smooth" });
-            }
-        });
     });
 }
 
@@ -286,15 +293,9 @@ function openVol(id, nameEnc) {
 }
 
 function goHome() {
-    // Save current scroll before leaving
-    if (_volId) {
-        var m = document.getElementById("main");
-        if (m && m.scrollHeight > m.clientHeight) {
-            var pct = Math.round(m.scrollTop / (m.scrollHeight - m.clientHeight) * 1000) / 10;
-            if (window.webview) window.webview.send("save-progress", { id: _volId, pct: pct });
-        }
-    }
-    stopSave(); _volId = null;
+    saveNow();
+    stopSave();
+    _volId = null;
     if (window.webview) window.webview.send("go-home", null);
     document.getElementById("home-wrap").style.display = "block";
     document.getElementById("reader-wrap").style.display = "none";
@@ -307,15 +308,13 @@ function goHome() {
 // ── Channel ───────────────────────────────────────────────────────
 if (window.webview) {
     window.webview.on("pageContent", function(html) {
+        var r = document.getElementById("reader-wrap");
         if (!html || html === "__LOADING__") {
-            document.getElementById("reader-wrap").innerHTML = '<div class="spinner"><div class="ring"></div></div>';
+            r.innerHTML = '<div class="spinner"><div class="ring"></div></div>';
             return;
         }
-        var r = document.getElementById("reader-wrap");
         r.innerHTML = html;
-        setupAnchorLinks(r);
         document.getElementById("main").scrollTop = 0;
-        // Restore saved progress
         var savedPct = _progMap[_volId] || 0;
         restoreScroll(savedPct);
         startSave(_volId);
@@ -325,8 +324,6 @@ if (window.webview) {
         _progMap = map || {};
         refreshBars(_progMap);
     });
-
-    // currentVol sync not needed in iframe beyond what openVol already tracks
 }
 </script>
 </body>
