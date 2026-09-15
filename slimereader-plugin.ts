@@ -31,7 +31,7 @@ function init() {
             { id:"b5",    name:"Booklets 5-8",           path:"/ln/b5.html",    coverSrc:"Booklets 5" },
         ];
 
-        // ── Progress via $storage ──────────────────────────────────────────────
+        // ── Progress ──────────────────────────────────────────────────────────
         function getProgress(id: string): number {
             try {
                 const val = $storage.get<number>("sr_p_" + id);
@@ -49,7 +49,7 @@ function init() {
             return map;
         }
 
-        // ── Cards HTML ────────────────────────────────────────────────────────
+        // ── Static cards HTML (embedded at init time, no channel sync needed) ─
         const CARDS_HTML = VOLUMES.map(v => {
             const coverPng  = `${BASE}/ln/sources/${encodeURIComponent(v.coverSrc)}/illustrations/cover.png`;
             const coverJpeg = `${BASE}/ln/sources/${encodeURIComponent(v.coverSrc)}/illustrations/cover.jpeg`;
@@ -78,9 +78,11 @@ function init() {
             },
         });
 
+        // Sync state to webview — docs confirm this fires on webview load too
         webview.channel.sync("pageContent", pageContent);
         webview.channel.sync("progressMap", progressMap);
 
+        // Load a volume: fetch HTML server-side, push cleaned HTML to iframe
         webview.channel.on("load-volume", async (volId: string) => {
             console.log("[slime-reader] load-volume: " + volId);
             const vol = VOLUMES.find(v => v.id === volId);
@@ -94,13 +96,10 @@ function init() {
                 }
                 let html = res.text();
 
-                // Replace clickable term spans with just the data-term text
-                html = html.replace(
-                    /<span\s[^>]*?data-term="([^"]*)"[^>]*>[\s\S]*?<\/span>/g,
-                    "$1"
-                );
+                // Replace term spans: <span data-term="Demon Lord" ...>JUNK</span> → "Demon Lord"
+                html = html.replace(/<span\s[^>]*?data-term="([^"]*)"[^>]*>[\s\S]*?<\/span>/g, "$1");
 
-                // Fix image srcs to absolute raw github URLs
+                // Fix image src to absolute raw github URLs
                 html = html.replace(/src="\/ln\//g, `src="${BASE}/ln/`);
 
                 // Strip unwanted tags
@@ -110,9 +109,9 @@ function init() {
                 html = html.replace(/<header[\s\S]*?<\/header>/gi, "");
                 html = html.replace(/<footer[\s\S]*?<\/footer>/gi, "");
 
-                // Strip ALL href attributes entirely — the iframe handles anchor
-                // scrolling via data-anchor; external links we don't need
-                html = html.replace(/ href="[^"]*"/g, "");
+                // Keep href="#anchor" intact — the iframe will intercept clicks
+                // Remove external hrefs only
+                html = html.replace(/ href="http[^"]*"/g, "");
 
                 pageContent.set(html);
             } catch(e: any) {
@@ -120,19 +119,13 @@ function init() {
             }
         });
 
-        // Save progress — data comes as JSON string from the channel
-        webview.channel.on("save-progress", (data: any) => {
-            try {
-                const parsed = typeof data === "string" ? JSON.parse(data) : data;
-                if (parsed && parsed.id) {
-                    const pct = Number(parsed.pct);
-                    if (!isNaN(pct)) {
-                        saveProgress(parsed.id, pct);
-                        console.log("[slime-reader] saved progress " + parsed.id + " = " + pct);
-                    }
-                }
-            } catch(e) {
-                console.error("[slime-reader] save-progress error: " + String(e));
+        // Receive progress from iframe — data is received as-is (not JSON-stringified)
+        webview.channel.on("save-progress", (data: { id: string; pct: number }) => {
+            if (!data || !data.id) return;
+            const pct = Number(data.pct);
+            if (!isNaN(pct)) {
+                saveProgress(data.id, pct);
+                console.log("[slime-reader] saved " + data.id + " = " + pct + "%");
             }
         });
 
@@ -163,7 +156,8 @@ function init() {
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-html, body { height: 100%; color-scheme: dark; background: #0d1117; color: #e2e8f0; font-family: -apple-system, "Segoe UI", system-ui, sans-serif; overflow: hidden; }
+html { color-scheme: dark; height: 100%; overflow: hidden; }
+body { height: 100%; background: #0d1117; color: #e2e8f0; font-family: -apple-system, "Segoe UI", system-ui, sans-serif; overflow: hidden; }
 #app { display: flex; flex-direction: column; height: 100vh; }
 #topbar { display: flex; align-items: center; gap: 10px; padding: 10px 18px; background: #161b22; border-bottom: 1px solid #30363d; flex-shrink: 0; }
 .logo { font-weight: 700; font-size: .95rem; color: #7ee8a2; }
@@ -192,7 +186,8 @@ html, body { height: 100%; color-scheme: dark; background: #0d1117; color: #e2e8
 #reader-wrap img { max-width: 100%; height: auto; border-radius: 6px; margin: 10px auto; display: block; }
 #reader-wrap h1 { font-family: system-ui, sans-serif; color: #7ee8a2; margin: 1.3em 0 .4em; font-size: 1.4rem; }
 #reader-wrap h1.title { font-size: 1.6rem; }
-#reader-wrap a { color: #7ee8a2; text-decoration: none; cursor: pointer; }
+#reader-wrap a[href^="#"] { color: #7ee8a2; text-decoration: underline; cursor: pointer; }
+#reader-wrap a:not([href]) { color: inherit; text-decoration: none; cursor: default; }
 #reader-wrap .scenebreak { text-align: center; margin: 1.5em 0; }
 #reader-wrap .ornament-soft { width: 60px; opacity: .5; }
 .spinner { display: flex; align-items: center; justify-content: center; height: 200px; }
@@ -228,32 +223,27 @@ var _volId = null;
 var _saveTimer = null;
 var _progMap = {};
 
-// ── Intercept ALL link clicks in the reader to prevent sandbox errors ─
-// We do this at the document level so it catches links added dynamically
+// Intercept anchor clicks to scroll instead of navigate (which triggers sandbox error)
 document.addEventListener("click", function(e) {
     var a = e.target.closest("a");
     if (!a) return;
-    // Always prevent default — we handle navigation ourselves
-    e.preventDefault();
-    e.stopPropagation();
     var href = a.getAttribute("href");
-    // Internal anchor — scroll to it
-    if (href && href.startsWith("#")) {
-        var id = href.slice(1);
-        var target = document.getElementById(id);
+    if (href && href.charAt(0) === "#") {
+        e.preventDefault();
+        e.stopPropagation();
+        var target = document.getElementById(href.slice(1));
         if (target) target.scrollIntoView({ behavior: "smooth" });
     }
-    // All other links (external URLs) — do nothing
-}, true); // capture phase so it fires before any inline handlers
+}, true);
 
-// ── Progress save ─────────────────────────────────────────────────
+// Progress save — send plain object (channel receives it as-is per docs)
 function startSave(id) {
-    stopSave(); _volId = id;
+    stopSave();
     _saveTimer = setInterval(function() {
         var m = document.getElementById("main");
         if (!m || m.scrollHeight <= m.clientHeight) return;
         var pct = Math.round(m.scrollTop / (m.scrollHeight - m.clientHeight) * 1000) / 10;
-        if (window.webview) window.webview.send("save-progress", JSON.stringify({ id: id, pct: pct }));
+        if (window.webview) window.webview.send("save-progress", { id: id, pct: pct });
     }, 2000);
 }
 function stopSave() { if (_saveTimer) { clearInterval(_saveTimer); _saveTimer = null; } }
@@ -263,7 +253,7 @@ function saveNow() {
     var m = document.getElementById("main");
     if (!m || m.scrollHeight <= m.clientHeight) return;
     var pct = Math.round(m.scrollTop / (m.scrollHeight - m.clientHeight) * 1000) / 10;
-    if (window.webview) window.webview.send("save-progress", JSON.stringify({ id: _volId, pct: pct }));
+    if (window.webview) window.webview.send("save-progress", { id: _volId, pct: pct });
 }
 
 function restoreScroll(pct) {
@@ -280,7 +270,6 @@ function refreshBars(map) {
     });
 }
 
-// ── Nav ───────────────────────────────────────────────────────────
 function openVol(id, nameEnc) {
     _volId = id;
     document.getElementById("home-wrap").style.display = "none";
@@ -305,7 +294,6 @@ function goHome() {
     document.getElementById("main").scrollTop = 0;
 }
 
-// ── Channel ───────────────────────────────────────────────────────
 if (window.webview) {
     window.webview.on("pageContent", function(html) {
         var r = document.getElementById("reader-wrap");
